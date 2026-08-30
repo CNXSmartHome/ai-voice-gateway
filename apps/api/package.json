@@ -16,7 +16,8 @@
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "npm run prisma:generate && jest --config jest.config.js",
     "test:integration": "npm run prisma:generate && jest --config jest.integration.config.js",
-    "clean": "rm -rf dist *.tsbuildinfo"
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "gateway:register": "node scripts/register-gateway.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.2.3",
