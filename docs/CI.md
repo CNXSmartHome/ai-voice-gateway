@@ -21,6 +21,9 @@ together rather than one hiding the other.
 - **Repository policy** — required governance documents exist; no `.env` file
   or private key is tracked.
 - **Lint, typecheck, test, build** — the same commands developers run locally.
+  Runs a PostgreSQL 16 service container so the database integration tests
+  execute against a real database rather than a mock. The container is
+  reachable only from the job and its credentials are throwaway.
 - **Dependency audit** — production dependencies must be clean at any
   severity (`--audit-level=low`, blocking). The dev-dependency audit is
   advisory, since dev packages do not ship to a runtime.
@@ -76,6 +79,7 @@ npm ci
 npm run lint
 npm run format:check
 npm run typecheck
+npm run prisma:migrate --workspace @vg/api   # requires DATABASE_URL
 npm run test:unit
 npm run test:integration
 npm run build
@@ -163,6 +167,19 @@ Everything here — code, issues, pull requests, CI logs — is world-readable.
 That raises the stakes on the secrets policy in `AI_GOVERNANCE.md`: a
 credential committed here is disclosed the moment it is pushed, and must be
 treated as compromised and rotated rather than merely removed from history.
+
+## Database in CI
+
+The integration tests that touch the schema require `DATABASE_URL`. CI sets it
+to the service container; locally, tests that need a database skip themselves
+with a warning rather than failing, so a developer without PostgreSQL still
+gets a green unit run.
+
+That skip is deliberate and narrow: it applies only to
+`database.integration-spec.ts`. The health endpoint integration tests stub the
+Prisma service and always run. **In CI the database tests never skip**, because
+`DATABASE_URL` is always set there — a change that breaks a constraint or a
+cascade fails the build.
 
 ## Why the policy is code
 

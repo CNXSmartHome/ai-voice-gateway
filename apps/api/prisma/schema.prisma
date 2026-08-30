@@ -1,0 +1,175 @@
+// AI Voice Gateway core schema.
+//
+// Models the hierarchy in docs/DEVICE_MODEL.md:
+//   Organization -> Property -> Room -> Gateway / Device
+//
+// Enum values here are the storage representation. They are mapped to the
+// canonical lowercase values in packages/domain by apps/api/src/database/
+// domain-mapping.ts, and a drift test asserts the two stay in step.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Top of the ownership hierarchy. An integrator or a home owner.
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  properties Property[]
+
+  @@map("organizations")
+}
+
+/// A villa, home, or building belonging to an organization.
+model Property {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  name           String
+  timezone       String   @default("UTC")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  rooms        Room[]
+  gateways     Gateway[]
+  devices      Device[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("properties")
+}
+
+/// A room within a property. Supplies the voice context: a gateway's room is
+/// what resolves "turn on the light" to a specific device.
+model Room {
+  id         String   @id @default(cuid())
+  propertyId String   @map("property_id")
+  name       String
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  property Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  gateways Gateway[]
+  devices  Device[]
+
+  @@unique([propertyId, name])
+  @@index([propertyId])
+  @@map("rooms")
+}
+
+/// A VG-100 voice gateway.
+///
+/// Holds no device data: it is an authenticated audio and transport endpoint
+/// (docs/ARCHITECTURE.md). Its value to the AI is the room it sits in.
+model Gateway {
+  id              String        @id @default(cuid())
+  propertyId      String        @map("property_id")
+  /// Null until the gateway is assigned to a room.
+  roomId          String?       @map("room_id")
+  /// Hardware identity, set at manufacture. Used to claim the device.
+  serialNumber    String        @unique @map("serial_number")
+  name            String
+  status          GatewayStatus @default(UNCLAIMED)
+  /// Reported by the device, used for OTA decisions (VG-030).
+  firmwareVersion String?       @map("firmware_version")
+  /// Updated by the heartbeat (VG-006); null when never connected.
+  lastSeenAt      DateTime?     @map("last_seen_at")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  // A room may be deleted while a gateway survives, unassigned.
+  room     Room?    @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  @@index([propertyId])
+  @@index([roomId])
+  @@map("gateways")
+}
+
+/// A controllable device, normalized away from its source platform.
+///
+/// `capabilities` holds canonical values only. Provider-specific names are
+/// normalized in the adapter layer before a row is written here.
+model Device {
+  id           String       @id @default(cuid())
+  propertyId   String       @map("property_id")
+  /// Null until assigned to a room (VG-013).
+  roomId       String?      @map("room_id")
+  name         String
+  type         DeviceType
+  platform     Platform
+  /// Identifier on the source platform. Meaningful only to that adapter.
+  externalId   String       @map("external_id")
+  capabilities Capability[]
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  room     Room?    @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  /// The same provider device cannot be imported into one property twice.
+  @@unique([propertyId, platform, externalId])
+  @@index([propertyId])
+  @@index([roomId])
+  @@map("devices")
+}
+
+enum GatewayStatus {
+  /// Manufactured and known, not yet claimed by an account.
+  UNCLAIMED
+  /// Claimed and provisioned, currently connected.
+  ONLINE
+  /// Claimed, not currently connected.
+  OFFLINE
+  /// Administratively taken out of service.
+  DISABLED
+
+  @@map("gateway_status")
+}
+
+enum DeviceType {
+  LIGHT
+  CLIMATE
+  CURTAIN
+  SWITCH
+  SCENE
+
+  @@map("device_type")
+}
+
+enum Platform {
+  TUYA
+
+  @@map("platform")
+}
+
+enum Capability {
+  // common
+  POWER
+  // light
+  BRIGHTNESS
+  COLOR_TEMPERATURE
+  RGB
+  // climate
+  TARGET_TEMPERATURE
+  CURRENT_TEMPERATURE
+  HVAC_MODE
+  FAN_SPEED
+  // curtain
+  POSITION
+  OPEN
+  CLOSE
+  STOP
+  // scene
+  EXECUTE
+
+  @@map("capability")
+}

@@ -55,6 +55,28 @@ jobs:
   quality:
     name: Lint, typecheck, test, build
     runs-on: ubuntu-latest
+
+    services:
+      # Ephemeral database for the integration tests. Reachable only from
+      # this job's container network; the credentials are throwaway and
+      # grant nothing outside it.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: vg
+          POSTGRES_PASSWORD: vg
+          POSTGRES_DB: vg_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vg -d vg_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://vg:vg@localhost:5432/vg_test?schema=public
+
     steps:
       - uses: actions/checkout@v4
 
@@ -74,6 +96,9 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Apply database migrations
+        run: npm run prisma:migrate --workspace @vg/api
 
       - name: Unit tests
         run: npm run test:unit

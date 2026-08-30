@@ -45,21 +45,35 @@ They are deliberately outside the npm workspace until initialized.
 
 - Node.js 20.11.0 or newer (see `.nvmrc`)
 - npm 10 or newer
+- PostgreSQL 16 — to run the API or the database integration tests. A
+  `docker-compose.yml` is provided for local use.
 
-PostgreSQL and Redis are introduced with the database schema task (VG-003).
+Redis is not used yet; no MVP task depends on it.
 
 ## Getting started
 
 ```bash
 npm install
 cp .env.example .env    # fill in local values; never commit this file
+```
+
+Start PostgreSQL and set `DATABASE_URL` in `.env`:
+
+```bash
+docker compose up -d postgres
+# DATABASE_URL=postgresql://vg:vg@127.0.0.1:5432/vg_dev?schema=public
+```
+
+Apply the schema, then build:
+
+```bash
+npm run prisma:migrate --workspace @vg/api
 npm run build
 ```
 
 Run the API:
 
 ```bash
-npm run build
 node apps/api/dist/main.js
 # or, for development
 npm run start:dev --workspace @vg/api
@@ -70,7 +84,30 @@ Verify it is up:
 ```bash
 curl http://127.0.0.1:3000/v1/health
 # {"status":"ok","service":"ai-voice-gateway-api","version":"0.1.0","uptimeSeconds":1}
+
+curl http://127.0.0.1:3000/v1/health/ready
+# {"status":"ready","service":"ai-voice-gateway-api","checks":{"database":"up"}}
 ```
+
+`/v1/health` is liveness and never touches a dependency. `/v1/health/ready`
+is readiness and returns 503 when the database is unreachable, so a load
+balancer removes the instance instead of sending it requests it cannot serve.
+
+## Database
+
+The schema lives in `apps/api/prisma/schema.prisma` and models the hierarchy
+in [`docs/DEVICE_MODEL.md`](docs/DEVICE_MODEL.md): Organization → Property →
+Room → Gateway / Device.
+
+| Command | Purpose |
+| --- | --- |
+| `npm run prisma:migrate --workspace @vg/api` | Apply committed migrations |
+| `npm run prisma:generate --workspace @vg/api` | Regenerate the client |
+| `npm run prisma:studio --workspace @vg/api` | Browse data locally |
+
+Storage enums are SCREAMING_SNAKE_CASE; the domain uses the canonical
+lowercase names. `apps/api/src/database/domain-mapping.ts` is the only place
+that knows both, and tests assert the two never drift.
 
 ## Checks
 
