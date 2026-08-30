@@ -1,0 +1,28 @@
+# Local development dependencies only. Nothing here is used by CI (which
+# runs its own service containers) or by any deployed environment.
+#
+# These credentials are local-only defaults for a throwaway container. Real
+# credentials belong in a secret manager -- see AI_GOVERNANCE.md.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: vg-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: vg
+      POSTGRES_PASSWORD: vg
+      POSTGRES_DB: vg_dev
+    ports:
+      # Bound to loopback so the database is not exposed on the network.
+      - '127.0.0.1:5432:5432'
+    volumes:
+      - vg-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U vg -d vg_dev']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  vg-postgres-data:

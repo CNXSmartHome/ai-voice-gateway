@@ -7,5 +7,9 @@ module.exports = {
   transform: {
     '^.+\\.ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.test.json' }],
   },
+  // See jest.config.js: keeps tests independent of build order.
+  moduleNameMapper: {
+    '^@vg/domain$': '<rootDir>/../../packages/domain/src/index.ts',
+  },
   testTimeout: 30000,
 };

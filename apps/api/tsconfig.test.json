@@ -5,7 +5,14 @@
     "declaration": false,
     "declarationMap": false,
     "noEmit": true,
-    "types": ["jest", "node"]
+    "types": ["jest", "node"],
+    // Resolve workspace packages to their sources rather than to built
+    // declaration files, so typechecking and tests do not depend on build
+    // order. The production build still goes through project references.
+    "baseUrl": ".",
+    "paths": {
+      "@vg/domain": ["../../packages/domain/src/index.ts"]
+    }
   },
   "include": ["src/**/*.ts", "test/**/*.ts"]
 }
