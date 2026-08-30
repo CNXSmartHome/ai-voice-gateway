@@ -197,18 +197,22 @@ describeWithDb('gateway claim (integration)', () => {
     });
 
     it('exposes no credential, secret, or internal field', async () => {
-      const owner = await signUp('no-secrets');
-      const { property } = await createProperty(owner.organizationId, 'no-secrets');
-      const gateway = await manufacture('no-secrets');
+      const owner = await signUp('leak-check');
+      const { property } = await createProperty(owner.organizationId, 'leak-check');
+      const gateway = await manufacture('leak-check');
 
       const response = await claim(owner.token, {
         serialNumber: gateway.serialNumber,
         propertyId: property.id,
       }).expect(200);
 
-      expect(JSON.stringify(response.body)).not.toMatch(
-        /secret|token|password|credential|apiKey|passwordHash/i,
-      );
+      // The fixture must not contain a trigger word itself, or the scan below
+      // reports a leak that is really just the test's own label echoed back in
+      // the serial number.
+      const CREDENTIAL_LIKE = /secret|token|password|credential|apiKey/i;
+      expect(gateway.serialNumber).not.toMatch(CREDENTIAL_LIKE);
+
+      expect(JSON.stringify(response.body)).not.toMatch(CREDENTIAL_LIKE);
       expect(Object.keys(response.body).sort()).toEqual([
         'createdAt',
         'firmwareVersion',
