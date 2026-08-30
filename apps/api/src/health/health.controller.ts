@@ -1,8 +1,18 @@
 import { Controller, Get, HttpCode, HttpStatus, Res } from '@nestjs/common';
 import type { Response } from 'express';
 
+import { Public } from '../auth/decorators';
+
 import { HealthService, type HealthStatus, type ReadinessStatus } from './health.service';
 
+/**
+ * Liveness and readiness probes.
+ *
+ * Public: these are polled by infrastructure that holds no user credentials,
+ * and a probe that could fail on an auth problem would report the process as
+ * unhealthy for the wrong reason.
+ */
+@Public()
 @Controller('health')
 export class HealthController {
   constructor(private readonly healthService: HealthService) {}
