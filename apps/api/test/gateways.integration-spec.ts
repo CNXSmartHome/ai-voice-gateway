@@ -315,6 +315,128 @@ describeWithDb('gateway claim (integration)', () => {
     });
   });
 
+  describe('an inconsistent row cannot be claimed', () => {
+    /**
+     * A gateway in a state nothing in this service can produce: `UNCLAIMED`
+     * while still holding ownership columns.
+     *
+     * The schema permits it because Postgres cannot express "UNCLAIMED
+     * implies no property" without a CHECK constraint Prisma does not model.
+     * If the claim guarded on status alone, such a row would match and be
+     * moved to whoever claimed it next — turning a data-integrity fault into
+     * an ownership transfer.
+     */
+    async function manufactureInconsistent(
+      label: string,
+      ownership: { propertyId?: string; roomId?: string },
+    ) {
+      const gateway = await prisma.gateway.create({
+        data: {
+          serialNumber: `VG100-${unique(label)}`.slice(0, 64),
+          name: 'VG-100',
+          status: 'UNCLAIMED',
+          ...ownership,
+        },
+      });
+      createdGatewayIds.push(gateway.id);
+
+      return gateway;
+    }
+
+    it('refuses an UNCLAIMED gateway that already holds a property', async () => {
+      const victim = await signUp('drift-victim');
+      const attacker = await signUp('drift-attacker');
+      const victimProperty = await createProperty(victim.organizationId, 'drift-victim');
+      const attackerProperty = await createProperty(attacker.organizationId, 'drift-attacker');
+
+      const gateway = await manufactureInconsistent('drift', {
+        propertyId: victimProperty.property.id,
+      });
+
+      await claim(attacker.token, {
+        serialNumber: gateway.serialNumber,
+        propertyId: attackerProperty.property.id,
+      }).expect(404);
+
+      // Untouched: still pointing at the property it held, not the claimant's.
+      await expect(
+        prisma.gateway.findUniqueOrThrow({ where: { id: gateway.id } }),
+      ).resolves.toMatchObject({
+        propertyId: victimProperty.property.id,
+        status: 'UNCLAIMED',
+      });
+    });
+
+    it('refuses even when the claimant owns the property the row points at', async () => {
+      // Not an authorization question. The row is in a state this service
+      // cannot produce, so it is not claimable by anyone until it is
+      // reconciled — being entitled to the property does not change that.
+      const owner = await signUp('drift-self');
+      const { property } = await createProperty(owner.organizationId, 'drift-self');
+
+      const gateway = await manufactureInconsistent('drift-self', { propertyId: property.id });
+
+      await claim(owner.token, {
+        serialNumber: gateway.serialNumber,
+        propertyId: property.id,
+      }).expect(404);
+
+      await expect(
+        prisma.gateway.findUniqueOrThrow({ where: { id: gateway.id } }),
+      ).resolves.toMatchObject({ status: 'UNCLAIMED', propertyId: property.id });
+    });
+
+    it('refuses an UNCLAIMED gateway that already holds a room', async () => {
+      // A room belongs to a property, so a room without a property is
+      // inconsistent on the same reasoning.
+      const owner = await signUp('drift-room');
+      const { property, room } = await createProperty(owner.organizationId, 'drift-room');
+
+      const gateway = await manufactureInconsistent('drift-room', { roomId: room.id });
+
+      await claim(owner.token, {
+        serialNumber: gateway.serialNumber,
+        propertyId: property.id,
+      }).expect(404);
+
+      await expect(
+        prisma.gateway.findUniqueOrThrow({ where: { id: gateway.id } }),
+      ).resolves.toMatchObject({ propertyId: null, roomId: room.id, status: 'UNCLAIMED' });
+    });
+
+    it('rejects it with the same body as any other failure', async () => {
+      // The refusal must not advertise that a row is in a broken state.
+      const owner = await signUp('drift-shape');
+      const { property } = await createProperty(owner.organizationId, 'drift-shape');
+      const gateway = await manufactureInconsistent('drift-shape', { propertyId: property.id });
+
+      const inconsistent = await claim(owner.token, {
+        serialNumber: gateway.serialNumber,
+        propertyId: property.id,
+      }).expect(404);
+
+      const unknownSerial = await claim(owner.token, {
+        serialNumber: 'VG100-not-registered',
+        propertyId: property.id,
+      }).expect(404);
+
+      expect(inconsistent.body).toEqual(unknownSerial.body);
+    });
+
+    it('still claims a properly manufactured gateway', async () => {
+      // The tightened predicate must not have made the normal path stricter
+      // than intended.
+      const owner = await signUp('drift-control');
+      const { property } = await createProperty(owner.organizationId, 'drift-control');
+      const gateway = await manufacture('drift-control');
+
+      await claim(owner.token, {
+        serialNumber: gateway.serialNumber,
+        propertyId: property.id,
+      }).expect(200);
+    });
+  });
+
   describe('failures are indistinguishable and leave nothing behind', () => {
     it('returns an identical body for an unknown serial and an already-claimed one', async () => {
       const owner = await signUp('oracle');

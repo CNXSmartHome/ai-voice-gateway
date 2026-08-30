@@ -14,8 +14,20 @@ import { GATEWAY_SELECT, toGatewayView, type GatewayView } from './gateway.view'
  */
 export const CLAIM_ROLES: readonly string[] = ['OWNER', 'ADMIN'];
 
-/** Status a gateway must be in to be claimable. */
-const CLAIMABLE_STATUS = 'UNCLAIMED';
+/**
+ * The complete persisted pre-claim state a gateway must be in to be claimed.
+ *
+ * All three columns, not just the status. `docs/DEVICE_MODEL.md` puts a
+ * gateway under exactly one property and the schema cannot express "UNCLAIMED
+ * implies no property", so this predicate is where that invariant is
+ * enforced -- on the write itself, against the persisted row, rather than in
+ * a check the row could drift away from afterwards.
+ */
+export const CLAIMABLE_STATE = {
+  status: 'UNCLAIMED',
+  propertyId: null,
+  roomId: null,
+} as const;
 
 /**
  * Status a gateway takes on once claimed.
@@ -71,14 +83,26 @@ export class GatewaysService {
         }
       }
 
-      // The claim itself: one guarded statement. `status = UNCLAIMED` in the
-      // WHERE clause is what makes concurrent claims safe -- the loser
-      // updates zero rows rather than taking the gateway from the winner.
-      // This updates the existing row, so the hardware identity (`id`,
-      // `serial_number`, `created_at`) is preserved.
+      // The claim itself: one guarded statement, updating the existing row so
+      // the hardware identity (`id`, `serial_number`, `created_at`) survives.
+      //
+      // The predicate spells out the whole pre-claim state rather than just
+      // the status. `status = UNCLAIMED` alone makes concurrent claims safe,
+      // but the schema cannot express "UNCLAIMED implies no property" -- so a
+      // row that had drifted into `UNCLAIMED` while still holding a
+      // `property_id` would match, and this statement would quietly move a
+      // gateway from its owner to whoever claimed it next. Requiring the
+      // ownership columns to be empty means an inconsistent row is refused
+      // instead of transferred: a data-integrity fault stays a fault rather
+      // than becoming a security one.
+      //
+      // `room_id` is included on the same reasoning. A room belongs to a
+      // property, so a gateway with a room but no property is already
+      // inconsistent, and nothing this service writes can produce it --
+      // `register()` sets neither column.
       const claimed = await tx.gateway
         .updateMany({
-          where: { serialNumber: input.serialNumber, status: CLAIMABLE_STATUS },
+          where: { serialNumber: input.serialNumber, ...CLAIMABLE_STATE },
           data: {
             propertyId: property.id,
             roomId: input.roomId ?? null,

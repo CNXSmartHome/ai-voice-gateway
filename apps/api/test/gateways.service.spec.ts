@@ -85,14 +85,22 @@ describe('GatewaysService', () => {
       expect(gatewayUpdateMany).toHaveBeenCalledTimes(1);
     });
 
-    it('guards the update on the unclaimed status', async () => {
-      // This is what makes a concurrent claim safe: the loser matches zero
-      // rows instead of taking the gateway from the winner.
+    it('guards the update on the whole persisted pre-claim state', async () => {
+      // The status guard is what makes a concurrent claim safe: the loser
+      // matches zero rows instead of taking the gateway from the winner.
+      //
+      // The ownership columns are in the predicate for a different reason.
+      // The schema cannot express "UNCLAIMED implies no property", so a row
+      // that drifted into UNCLAIMED while still owned would otherwise match
+      // and be transferred to whoever claimed it next. Written out literally
+      // rather than reusing the constant, so a change to it fails here.
       await service.claim(OWNER, INPUT);
 
       expect(gatewayUpdateMany.mock.calls[0]?.[0]?.where).toEqual({
         serialNumber: 'VG100-0001',
         status: 'UNCLAIMED',
+        propertyId: null,
+        roomId: null,
       });
     });
 
