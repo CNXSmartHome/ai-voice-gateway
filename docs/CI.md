@@ -175,11 +175,78 @@ to the service container; locally, tests that need a database skip themselves
 with a warning rather than failing, so a developer without PostgreSQL still
 gets a green unit run.
 
-That skip is deliberate and narrow: it applies only to
-`database.integration-spec.ts`. The health endpoint integration tests stub the
-Prisma service and always run. **In CI the database tests never skip**, because
-`DATABASE_URL` is always set there — a change that breaks a constraint or a
-cascade fails the build.
+That skip is deliberate and narrow: it applies only to suites that need real
+rows. Others stub the Prisma service and always run. **In CI the database
+tests never skip**, because `DATABASE_URL` is always set there — a change that
+breaks a constraint or a cascade fails the build.
+
+## Running the database tests locally
+
+The skip is a safety net, not a plan. Letting CI be the first place these run
+has cost real time: a defect in VG-003 and a broken test fixture in VG-005
+each took a round-trip to find, and both would have surfaced in seconds
+locally.
+
+`docker-compose.yml` describes the right database. If Docker runs on the same
+machine:
+
+```bash
+docker compose up -d
+export DATABASE_URL='postgresql://vg:vg@127.0.0.1:5432/vg_dev?schema=public'
+npm run --workspace @vg/api prisma:migrate
+npm run test:integration
+```
+
+### On a remote Docker host
+
+A development machine without Docker — a Windows workstation, for instance —
+can use one elsewhere on the network. Copy the compose file to the host and
+start it there:
+
+```bash
+scp docker-compose.yml <host>:~/ai-voice-gateway/docker-compose.yml
+ssh <host> 'cd ~/ai-voice-gateway && docker compose -p vg up -d'
+```
+
+Then forward the port, and treat it as if it were local:
+
+```bash
+ssh -f -N -L 127.0.0.1:5432:127.0.0.1:5432 <host>
+export DATABASE_URL='postgresql://vg:vg@127.0.0.1:5432/vg_dev?schema=public'
+npm run --workspace @vg/api prisma:migrate
+npm run test:integration
+```
+
+**Use a tunnel rather than publishing the port.** `docker-compose.yml` binds
+`127.0.0.1` on purpose, and a database on a shared network should not be the
+exception to that. The tunnel keeps it on loopback at both ends, so the
+throwaway credentials in the compose file stay throwaway. Changing the bind to
+`0.0.0.0` would put an unauthenticated-by-default database on the LAN.
+
+**`-p vg` matters** if the host runs other compose projects: without it, an
+unrelated stack can be adopted or torn down by these commands.
+
+Two things to know:
+
+- The compose file in this repository is the source of truth. A copy on a
+  remote host **will drift** when it changes here; re-copy it rather than
+  editing it there.
+- Host names, addresses, and keys belong in your own `~/.ssh/config` and a
+  gitignored `.env`, never in this repository.
+- One database serving several branches accumulates their migrations. Moving
+  to a branch whose migrations are a subset leaves the schema ahead of it,
+  which `migrate deploy` reports as nothing to do rather than as a problem.
+  When that matters, start clean:
+
+  ```bash
+  ssh <host> 'cd ~/ai-voice-gateway && docker compose -p vg down -v && docker compose -p vg up -d'
+  ```
+
+  Safe to do at any time — this database holds nothing anyone should keep.
+
+Nothing about this is a deployment. It is a development database, and
+`docs/ARCHITECTURE.md` is unchanged: STAGING and PRODUCTION are still
+CI/CD-only, per `AI_GOVERNANCE.md`.
 
 ## Why the policy is code
 
