@@ -26,6 +26,11 @@ describeWithDb('database schema (integration)', () => {
   const prisma = new PrismaService();
   /** Organizations created by a test, torn down afterwards. */
   const createdOrganizationIds: string[] = [];
+  /**
+   * Unclaimed gateways hold no property, so the organization teardown below
+   * cannot reach them. They are tracked and removed separately.
+   */
+  const createdGatewayIds: string[] = [];
 
   async function createHierarchy(label: string) {
     const organization = await prisma.organization.create({ data: { name: `Org ${label}` } });
@@ -46,11 +51,24 @@ describeWithDb('database schema (integration)', () => {
   });
 
   afterAll(async () => {
+    if (createdGatewayIds.length > 0) {
+      await prisma.gateway.deleteMany({ where: { id: { in: createdGatewayIds } } });
+    }
     if (createdOrganizationIds.length > 0) {
       await prisma.organization.deleteMany({ where: { id: { in: createdOrganizationIds } } });
     }
     await prisma.$disconnect();
   });
+
+  /** A manufactured gateway: a serial number and nothing else. */
+  async function manufactureGateway(label: string) {
+    const gateway = await prisma.gateway.create({
+      data: { serialNumber: `SN-${Date.now()}-${label}`, name: `VG-100 ${label}` },
+    });
+    createdGatewayIds.push(gateway.id);
+
+    return gateway;
+  }
 
   it('answers a probe query', async () => {
     await expect(prisma.isReachable()).resolves.toBe(true);
@@ -69,16 +87,13 @@ describeWithDb('database schema (integration)', () => {
     expect(loaded.properties[0]?.rooms[0]?.id).toBe(room.id);
   });
 
-  it('defaults a new gateway to unclaimed and never seen', async () => {
-    const { property } = await createHierarchy('gateway-default');
-
-    const gateway = await prisma.gateway.create({
-      data: { propertyId: property.id, serialNumber: `SN-${Date.now()}-a`, name: 'Hall gateway' },
-    });
+  it('defaults a new gateway to unclaimed, unowned, and never seen', async () => {
+    const gateway = await manufactureGateway('default');
 
     expect(gateway.status).toBe('UNCLAIMED');
-    expect(gateway.lastSeenAt).toBeNull();
+    expect(gateway.propertyId).toBeNull();
     expect(gateway.roomId).toBeNull();
+    expect(gateway.lastSeenAt).toBeNull();
     expect(gateway.firmwareVersion).toBeNull();
   });
 
@@ -91,6 +106,105 @@ describeWithDb('database schema (integration)', () => {
     await expect(
       prisma.gateway.create({ data: { propertyId: property.id, serialNumber, name: 'Second' } }),
     ).rejects.toThrow(Prisma.PrismaClientKnownRequestError);
+  });
+
+  describe('gateway claim lifecycle', () => {
+    it('persists an unclaimed gateway with no property', async () => {
+      const gateway = await manufactureGateway('unowned');
+
+      // Read back rather than trusting the returned object: the point is that
+      // the row survives in the database with a NULL owner.
+      await expect(prisma.gateway.findUnique({ where: { id: gateway.id } })).resolves.toMatchObject(
+        { id: gateway.id, propertyId: null, status: 'UNCLAIMED' },
+      );
+    });
+
+    it('claims a gateway into a property without recreating the row', async () => {
+      const { property, room } = await createHierarchy('claim');
+      const manufactured = await manufactureGateway('claim');
+
+      // One statement sets the owner and transitions the status together, so
+      // no reader can observe a claimed-but-unowned gateway (VG-005).
+      const claimed = await prisma.gateway.update({
+        where: { serialNumber: manufactured.serialNumber },
+        data: { propertyId: property.id, roomId: room.id, status: 'OFFLINE' },
+      });
+
+      expect(claimed.id).toBe(manufactured.id);
+      expect(claimed.createdAt).toEqual(manufactured.createdAt);
+      expect(claimed.propertyId).toBe(property.id);
+      expect(claimed.status).toBe('OFFLINE');
+
+      await expect(
+        prisma.gateway.count({ where: { serialNumber: manufactured.serialNumber } }),
+      ).resolves.toBe(1);
+    });
+
+    it('claims only once: a second claim of the same gateway matches no row', async () => {
+      const { property: first } = await createHierarchy('claim-first');
+      const { property: second } = await createHierarchy('claim-second');
+      const manufactured = await manufactureGateway('claim-once');
+
+      const claim = (propertyId: string) =>
+        prisma.gateway.updateMany({
+          // The status guard is what makes the claim safe to race.
+          where: { serialNumber: manufactured.serialNumber, status: 'UNCLAIMED' },
+          data: { propertyId, status: 'OFFLINE' },
+        });
+
+      await expect(claim(first.id)).resolves.toEqual({ count: 1 });
+      await expect(claim(second.id)).resolves.toEqual({ count: 0 });
+
+      await expect(
+        prisma.gateway.findUnique({ where: { id: manufactured.id } }),
+      ).resolves.toMatchObject({ propertyId: first.id });
+    });
+
+    it('rejects a claim into a property that does not exist', async () => {
+      const manufactured = await manufactureGateway('claim-bad-fk');
+
+      await expect(
+        prisma.gateway.update({
+          where: { id: manufactured.id },
+          data: { propertyId: 'does-not-exist', status: 'OFFLINE' },
+        }),
+      ).rejects.toThrow(Prisma.PrismaClientKnownRequestError);
+
+      // The gateway is untouched: a failed claim leaves it claimable.
+      await expect(
+        prisma.gateway.findUnique({ where: { id: manufactured.id } }),
+      ).resolves.toMatchObject({ propertyId: null, status: 'UNCLAIMED' });
+    });
+
+    it('rejects creating a gateway already pointing at a property that does not exist', async () => {
+      await expect(
+        prisma.gateway.create({
+          data: {
+            propertyId: 'does-not-exist',
+            serialNumber: `SN-${Date.now()}-orphan`,
+            name: 'Orphan gateway',
+          },
+        }),
+      ).rejects.toThrow(Prisma.PrismaClientKnownRequestError);
+    });
+
+    it('leaves unclaimed gateways untouched when a property is deleted', async () => {
+      const { property } = await createHierarchy('claim-cascade');
+      const unclaimed = await manufactureGateway('survives');
+      const claimed = await prisma.gateway.update({
+        where: { id: (await manufactureGateway('deleted')).id },
+        data: { propertyId: property.id, status: 'OFFLINE' },
+      });
+
+      await prisma.property.delete({ where: { id: property.id } });
+
+      // The claimed gateway belonged to the property and goes with it; the
+      // unclaimed hardware identity is owned by nobody and must survive.
+      await expect(prisma.gateway.findUnique({ where: { id: claimed.id } })).resolves.toBeNull();
+      await expect(
+        prisma.gateway.findUnique({ where: { id: unclaimed.id } }),
+      ).resolves.toMatchObject({ id: unclaimed.id, propertyId: null, status: 'UNCLAIMED' });
+    });
   });
 
   it('rejects importing the same provider device into one property twice', async () => {

@@ -101,6 +101,20 @@ describe('schema.prisma models the documented hierarchy', () => {
     expect(schema).toMatch(/serialNumber\s+String\s+@unique/);
   });
 
+  it('leaves the gateway property optional so the pre-claim state is representable', () => {
+    // A gateway exists from manufacture, before any property owns it: an
+    // UNCLAIMED row must be persistable with no property (VG-005 claims it).
+    expect(modelFields('Gateway').propertyId).toBe('String?');
+    expect(modelFields('Gateway').property).toBe('Property?');
+  });
+
+  it('still roots claimed devices and rooms in a property', () => {
+    // Only the gateway is manufactured before it is owned. Nothing else in
+    // the hierarchy may float free.
+    expect(modelFields('Device').propertyId).toBe('String');
+    expect(modelFields('Room').propertyId).toBe('String');
+  });
+
   it('stores no smart-home credentials on the gateway', () => {
     // docs/ARCHITECTURE.md: Tuya credentials never reach the gateway.
     const gateway = JSON.stringify(modelFields('Gateway')).toLowerCase();
@@ -123,6 +137,27 @@ describe('migration', () => {
 
   it('is additive: it drops nothing', () => {
     expect(migration).not.toMatch(/\bDROP\b/i);
+  });
+
+  it('creates the gateway property column nullable', () => {
+    const gateways = /CREATE TABLE "gateways" \(([\s\S]*?)\n\);/.exec(migration)?.[1] ?? '';
+
+    expect(gateways).toMatch(/"property_id" TEXT,/);
+    expect(gateways).not.toMatch(/"property_id" TEXT NOT NULL/);
+    // The foreign key still exists; it is the column that is optional.
+    expect(migration).toMatch(
+      /ALTER TABLE "gateways" ADD CONSTRAINT "gateways_property_id_fkey"[\s\S]*?REFERENCES "properties"\("id"\)/,
+    );
+  });
+
+  it('keeps every other property owner required', () => {
+    for (const table of ['rooms', 'devices']) {
+      const body = new RegExp(`CREATE TABLE "${table}" \\(([\\s\\S]*?)\\n\\);`).exec(
+        migration,
+      )?.[1];
+
+      expect(body).toMatch(/"property_id" TEXT NOT NULL/);
+    }
   });
 
   it('enforces the one-import-per-provider-device rule', () => {

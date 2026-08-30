@@ -69,9 +69,15 @@ model Room {
 ///
 /// Holds no device data: it is an authenticated audio and transport endpoint
 /// (docs/ARCHITECTURE.md). Its value to the AI is the room it sits in.
+///
+/// A gateway exists from manufacture, before anyone owns it. The pre-claim
+/// state is `status = UNCLAIMED` with `property_id = NULL`; claiming (VG-005)
+/// assigns the property on the existing row, keyed by serial number, so the
+/// hardware identity is never recreated.
 model Gateway {
   id              String        @id @default(cuid())
-  propertyId      String        @map("property_id")
+  /// Null until the gateway is claimed into a property (VG-005).
+  propertyId      String?       @map("property_id")
   /// Null until the gateway is assigned to a room.
   roomId          String?       @map("room_id")
   /// Hardware identity, set at manufacture. Used to claim the device.
@@ -85,9 +91,11 @@ model Gateway {
   createdAt       DateTime      @default(now()) @map("created_at")
   updatedAt       DateTime      @updatedAt @map("updated_at")
 
-  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  // Cascades only once claimed: an unclaimed gateway holds no property, so no
+  // property delete can reach a hardware identity nobody owns yet.
+  property Property? @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   // A room may be deleted while a gateway survives, unassigned.
-  room     Room?    @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  room     Room?     @relation(fields: [roomId], references: [id], onDelete: SetNull)
 
   @@index([propertyId])
   @@index([roomId])

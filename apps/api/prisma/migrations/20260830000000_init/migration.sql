@@ -46,7 +46,7 @@ CREATE TABLE "rooms" (
 -- CreateTable
 CREATE TABLE "gateways" (
     "id" TEXT NOT NULL,
-    "property_id" TEXT NOT NULL,
+    "property_id" TEXT,
     "room_id" TEXT,
     "serial_number" TEXT NOT NULL,
     "name" TEXT NOT NULL,
