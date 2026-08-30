@@ -1,0 +1,108 @@
+name: Quality Gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20.11.0'
+
+jobs:
+  policy:
+    name: Repository policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Required governance documents are present
+        run: |
+          test -f CLAUDE.md
+          test -f AI_GOVERNANCE.md
+          test -f README.md
+          test -f docs/ARCHITECTURE.md
+          test -f docs/PRODUCT.md
+          test -f docs/DEVICE_MODEL.md
+          test -f docs/API.md
+          test -f docs/30_DAY_PLAN.md
+          test -f docs/BACKLOG.csv
+
+      - name: No committed .env files
+        run: |
+          if git ls-files --error-unmatch '.env' '**/.env' 2>/dev/null; then
+            echo "::error::A .env file is tracked in git. Secrets must live in GitHub Actions Secrets or a cloud secret manager (AI_GOVERNANCE.md)."
+            exit 1
+          fi
+          echo "No tracked .env files."
+
+      - name: No committed private keys
+        run: |
+          matches="$(git ls-files -- '*.pem' '*.key' '*.p12' '*.keystore')"
+          if [ -n "$matches" ]; then
+            echo "::error::Private key material is tracked in git:"
+            echo "$matches"
+            exit 1
+          fi
+          echo "No tracked key material."
+
+  quality:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Integration tests
+        run: npm run test:integration
+
+      - name: Build
+        run: npm run build
+
+  security:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Production dependencies must be clean at any severity.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=low
+
+      # Dev dependencies are advisory; they do not ship to a runtime.
+      - name: Audit all dependencies (non-blocking)
+        continue-on-error: true
+        run: npm audit --audit-level=moderate
