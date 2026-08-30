@@ -1,0 +1,96 @@
+name: Auto-merge
+
+# Implements the auto-merge policy in AI_GOVERNANCE.md:
+#   CI passes, no blocking review comments, no human:approval-required label,
+#   risk is low or medium, and the required review is complete.
+#
+# This workflow only ENABLES GitHub's native auto-merge; it never merges
+# directly. GitHub still withholds the merge until branch protection is
+# satisfied, so the policy check here is a second gate, not the only one.
+
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request:
+    types: [labeled, unlabeled, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    name: Evaluate auto-merge policy
+    runs-on: ubuntu-latest
+    # Never act on a pull request from a fork: it would evaluate a policy over
+    # code the repository does not control.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.11.0'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build governance tool
+        run: npm run build --workspace @vg/governance
+
+      - name: Collect pull request facts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr view "$PR_NUMBER" \
+            --json title,labels,isDraft,reviewDecision,statusCheckRollup \
+            > raw.json
+          node -e '
+            const raw = JSON.parse(require("fs").readFileSync("raw.json", "utf8"));
+            const checks = raw.statusCheckRollup ?? [];
+            const conclusive = (c) =>
+              c.conclusion === "SUCCESS" ||
+              c.conclusion === "SKIPPED" ||
+              c.conclusion === "NEUTRAL" ||
+              c.state === "SUCCESS";
+            const facts = {
+              title: raw.title ?? "",
+              labels: (raw.labels ?? []).map((l) => l.name),
+              isDraft: raw.isDraft === true,
+              // Fails closed: an empty or in-flight check set is not a pass.
+              checksPassed: checks.length > 0 && checks.every(conclusive),
+              reviewApproved: raw.reviewDecision === "APPROVED",
+              changesRequested: raw.reviewDecision === "CHANGES_REQUESTED",
+            };
+            require("fs").writeFileSync("pr.json", JSON.stringify(facts));
+            console.log(JSON.stringify(facts, null, 2));
+          '
+
+      - name: Evaluate policy
+        id: policy
+        run: |
+          node tools/governance/dist/cli.js automerge < pr.json | tee result.txt
+          grep -q '^eligible=true$' result.txt && echo "eligible=true" >> "$GITHUB_OUTPUT" || echo "eligible=false" >> "$GITHUB_OUTPUT"
+
+      - name: Enable auto-merge
+        if: steps.policy.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh pr merge "$PR_NUMBER" --auto --squash
+
+      - name: Report ineligibility
+        if: steps.policy.outputs.eligible != 'true'
+        run: |
+          echo "### Auto-merge not enabled" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat result.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

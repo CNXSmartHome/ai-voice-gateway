@@ -28,9 +28,12 @@ apps/
   mobile/         React Native app          (reserved - VG-008)
 packages/
   domain/         Universal device model shared across services
+tools/
+  governance/     AI_GOVERNANCE.md pull request policy, enforced by CI
 firmware/
   vg100/          ESP32-S3 / ESP-IDF firmware (reserved - VG-007)
 docs/             Product, architecture, API, and device model specs
+  CI.md           Pipeline reference and required repository settings
   adr/            Architecture decision records
 .github/          Issue templates, PR template, CI workflows
 ```
@@ -84,6 +87,20 @@ The same commands run locally and in CI (`.github/workflows/quality-gate.yml`):
 | `npm run build` | Compile all workspaces |
 
 Run everything before opening a pull request.
+
+CI runs these same commands plus CodeQL analysis, dependency review, and the
+governance policy checks. See [`docs/CI.md`](docs/CI.md) for the full pipeline
+and the branch-protection settings the repository owner must apply.
+
+## Pull request rules
+
+CI enforces two rules from [`AI_GOVERNANCE.md`](AI_GOVERNANCE.md):
+
+1. The PR title references a backlog task, e.g. `[VG-001] Initialize monorepo`.
+2. Exactly one `risk:` label is present.
+
+Those rules live in `tools/governance` as unit-tested functions, so changing
+the policy is a reviewable code change rather than an edit to a YAML script.
 
 ## The device model is a contract
 

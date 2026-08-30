@@ -1,0 +1,19 @@
+{
+  "name": "@vg/governance",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Machine-checkable AI_GOVERNANCE.md pull request policy used by CI",
+  "license": "UNLICENSED",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "vg-governance": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "test": "jest",
+    "test:unit": "jest",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  }
+}
