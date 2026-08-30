@@ -1,0 +1,36 @@
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - 'area:infra'
+      - 'risk:low'
+      - 'ai:auto'
+    commit-message:
+      prefix: 'chore(deps)'
+    groups:
+      # One PR for routine patch/minor bumps; majors stay separate because
+      # AI_GOVERNANCE.md treats a major upgrade as DUAL_AI_REVIEW.
+      dev-dependencies:
+        dependency-type: development
+        update-types: ['minor', 'patch']
+      production-dependencies:
+        dependency-type: production
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - 'area:infra'
+      - 'risk:low'
+      - 'ai:auto'
+    commit-message:
+      prefix: 'chore(ci)'

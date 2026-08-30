@@ -1,0 +1,55 @@
+name: PR Governance
+
+# Enforces the pull request rules in AI_GOVERNANCE.md. The policy itself lives
+# in tools/governance and is unit tested, so the rules are verified by the test
+# suite rather than only by live workflow runs.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-governance-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  governance:
+    name: Title and label policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.11.0'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build governance tool
+        run: npm run build --workspace @vg/governance
+
+      # The event payload is written to a file rather than interpolated into
+      # the shell, so a pull request title can never be executed as script.
+      - name: Collect pull request facts
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          node -e '
+            const facts = {
+              title: process.env.PR_TITLE ?? "",
+              labels: JSON.parse(process.env.PR_LABELS || "[]"),
+              isDraft: process.env.PR_DRAFT === "true",
+            };
+            require("fs").writeFileSync("pr.json", JSON.stringify(facts));
+          '
+
+      - name: Validate governance metadata
+        run: node tools/governance/dist/cli.js validate < pr.json

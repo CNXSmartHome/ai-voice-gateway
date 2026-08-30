@@ -1,0 +1,12 @@
+# Review routing. Ownership is advisory until branch protection requires it;
+# see docs/CI.md for the settings the repository owner must apply.
+
+*                       @CNXSmartHome
+
+# Governance and security surfaces warrant explicit attention on every change.
+/AI_GOVERNANCE.md       @CNXSmartHome
+/CLAUDE.md              @CNXSmartHome
+/.github/               @CNXSmartHome
+/docs/ARCHITECTURE.md   @CNXSmartHome
+/docs/adr/              @CNXSmartHome
+/tools/governance/      @CNXSmartHome
