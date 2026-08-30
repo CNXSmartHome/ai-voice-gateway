@@ -1,0 +1,47 @@
+name: Feature Task
+description: Implementation task for Claude
+title: "[VG-XXX] "
+labels: ["status:READY", "ai:auto"]
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+    validations:
+      required: true
+  - type: textarea
+    id: outscope
+    attributes:
+      label: Out of Scope
+    validations:
+      required: true
+  - type: textarea
+    id: criteria
+    attributes:
+      label: Acceptance Criteria
+      placeholder: "- [ ] ..."
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Tests Required
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security Considerations
+  - type: dropdown
+    id: approval
+    attributes:
+      label: Human Approval Required?
+      options: ["NO", "YES"]
+    validations:
+      required: true

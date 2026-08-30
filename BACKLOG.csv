@@ -1,0 +1,39 @@
+id,title,week,priority,risk,area,human_approval
+VG-001,Initialize monorepo,1,P0,low,infra,no
+VG-002,CI baseline,1,P0,low,infra,no
+VG-003,Core database schema,1,P0,medium,backend,no
+VG-004,Authentication baseline,1,P0,medium,backend,no
+VG-005,Gateway registration and claim,1,P0,medium,backend,no
+VG-006,Gateway WebSocket heartbeat,1,P0,medium,backend,no
+VG-007,BLE Wi-Fi provisioning skeleton,1,P0,medium,firmware,no
+VG-008,Mobile add-gateway flow,1,P0,medium,mobile,no
+VG-009,SmartHomeAdapter interface,2,P0,medium,integration,no
+VG-010,Tuya connect flow,2,P0,medium,integration,no
+VG-011,Tuya device discovery,2,P0,medium,integration,no
+VG-012,Capability normalization,2,P0,medium,integration,no
+VG-013,Room assignment,2,P0,low,mobile,no
+VG-014,Manual light control,2,P0,medium,integration,no
+VG-015,Climate control,2,P0,medium,integration,no
+VG-016,Curtain control,2,P0,medium,integration,no
+VG-017,Scene execution,2,P1,medium,integration,no
+VG-018,Gateway audio streaming,3,P0,medium,firmware,no
+VG-019,Realtime AI session,3,P0,medium,ai,no
+VG-020,AI tool schemas,3,P0,medium,ai,no
+VG-021,Gateway room context injection,3,P0,medium,ai,no
+VG-022,Voice light E2E,3,P0,medium,ai,no
+VG-023,Voice climate E2E,3,P0,medium,ai,no
+VG-024,Voice curtain E2E,3,P0,medium,ai,no
+VG-025,Conversation follow-up context,3,P1,medium,ai,no
+VG-026,Ambiguity handling,3,P1,medium,ai,no
+VG-027,Voice response playback,3,P0,medium,firmware,no
+VG-028,Gateway device credentials,4,P0,high,security,no
+VG-029,Rate limiting and audit logs,4,P0,high,security,no
+VG-030,OTA baseline,4,P0,high,firmware,no
+VG-031,OTA rollback,4,P0,high,firmware,no
+VG-032,Metrics and health dashboard,4,P1,low,infra,no
+VG-033,AI and tool observability,4,P1,medium,ai,no
+VG-034,E2E command corpus,4,P0,low,qa,no
+VG-035,Failure and chaos tests,4,P0,medium,qa,no
+VG-036,App UI cleanup,4,P2,low,mobile,no
+VG-037,Release candidate pipeline,4,P0,high,infra,no
+VG-038,Final acceptance checklist,4,P0,medium,qa,yes
