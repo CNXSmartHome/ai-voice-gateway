@@ -1,7 +1,7 @@
 name: Feature Task
 description: Implementation task for Claude
-title: "[VG-XXX] "
-labels: ["status:READY", "ai:auto"]
+title: '[VG-XXX] '
+labels: ['status:READY', 'ai:auto']
 body:
   - type: textarea
     id: context
@@ -25,7 +25,7 @@ body:
     id: criteria
     attributes:
       label: Acceptance Criteria
-      placeholder: "- [ ] ..."
+      placeholder: '- [ ] ...'
     validations:
       required: true
   - type: textarea
@@ -42,6 +42,6 @@ body:
     id: approval
     attributes:
       label: Human Approval Required?
-      options: ["NO", "YES"]
+      options: ['NO', 'YES']
     validations:
       required: true

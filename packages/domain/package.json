@@ -1,0 +1,19 @@
+{
+  "name": "@vg/domain",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Platform-neutral universal device model shared across services",
+  "license": "UNLICENSED",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "typecheck": "tsc -b tsconfig.json --noEmit false --emitDeclarationOnly",
+    "test": "jest --passWithNoTests",
+    "test:unit": "jest --passWithNoTests",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  }
+}

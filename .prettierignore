@@ -1,0 +1,11 @@
+node_modules
+dist
+build
+coverage
+*.log
+package-lock.json
+
+# Specification and governance documents are authored prose and are parsed
+# by the domain doc-contract test. Prettier must not reflow them.
+*.md
+docs/BACKLOG.csv
