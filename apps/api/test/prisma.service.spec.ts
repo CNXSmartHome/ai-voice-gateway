@@ -1,10 +1,19 @@
+import { Logger } from '@nestjs/common';
+
 import { PrismaService } from '../src/database/prisma.service';
 
 describe('PrismaService.isReachable', () => {
   let service: PrismaService;
 
   beforeEach(() => {
+    // These tests deliberately simulate driver failures. Silence the logger
+    // so a passing run does not print connection errors that look real.
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     service = new PrismaService();
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   it('is true when the probe query succeeds', async () => {
