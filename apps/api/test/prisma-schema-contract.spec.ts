@@ -176,3 +176,102 @@ describe('migration', () => {
     expect(migration).toMatch(/devices_room_id_fkey[\s\S]*?ON DELETE SET NULL/);
   });
 });
+
+describe('schema.prisma models the account hierarchy (VG-004)', () => {
+  it.each(['User', 'Membership'])('declares %s', (model) => {
+    expect(() => modelFields(model)).not.toThrow();
+  });
+
+  it('makes the email address the unique sign-in identity', () => {
+    expect(modelFields('User').email).toBe('String');
+    expect(schema).toMatch(/email\s+String\s+@unique/);
+  });
+
+  it('stores a password hash and nothing resembling a plaintext password', () => {
+    const user = modelFields('User');
+
+    expect(user.passwordHash).toBe('String');
+    expect(Object.keys(user)).not.toContain('password');
+    expect(Object.keys(user)).not.toContain('plaintext');
+  });
+
+  it('links users to organizations through a membership carrying a role', () => {
+    const membership = modelFields('Membership');
+
+    expect(membership.userId).toBe('String');
+    expect(membership.organizationId).toBe('String');
+    expect(membership.role).toBe('MembershipRole');
+  });
+
+  it('gives a user one role per organization', () => {
+    expect(schema).toMatch(/@@unique\(\[userId, organizationId\]\)/);
+  });
+
+  it('declares a status so an account can be disabled without deletion', () => {
+    expect(modelFields('User').status).toBe('UserStatus');
+    expect(enumValues('UserStatus').sort()).toEqual(['ACTIVE', 'DISABLED']);
+  });
+
+  it('declares the membership roles', () => {
+    expect(enumValues('MembershipRole').sort()).toEqual(['ADMIN', 'MEMBER', 'OWNER']);
+  });
+});
+
+describe('auth migration (VG-004)', () => {
+  const AUTH_MIGRATION = join(
+    __dirname,
+    '..',
+    'prisma',
+    'migrations',
+    '20260830120000_add_auth',
+    'migration.sql',
+  );
+  const migration = readFileSync(AUTH_MIGRATION, 'utf8');
+
+  it('creates the user and membership tables', () => {
+    for (const table of ['users', 'memberships']) {
+      expect(migration).toContain(`CREATE TABLE "${table}"`);
+    }
+  });
+
+  it('is additive: it drops nothing', () => {
+    // VG-003's tables already exist wherever this runs; the account tables
+    // are added alongside them, never by rebuilding.
+    expect(migration).not.toMatch(/\bDROP\b/i);
+  });
+
+  it('does not alter the tables VG-003 created', () => {
+    // An ALTER here would mean this migration is no longer purely additive.
+    for (const table of ['organizations', 'properties', 'rooms', 'gateways', 'devices']) {
+      expect(migration).not.toMatch(
+        new RegExp(`ALTER TABLE "${table}"[^\n]*(ADD COLUMN|DROP|ALTER COLUMN)`),
+      );
+    }
+  });
+
+  it('enforces one account per email address', () => {
+    expect(migration).toMatch(/CREATE UNIQUE INDEX "users_email_key" ON "users"\("email"\)/);
+  });
+
+  it('enforces one membership per user and organization', () => {
+    expect(migration).toMatch(/CREATE UNIQUE INDEX "memberships_user_id_organization_id_key"/);
+  });
+
+  it('removes memberships with the user or the organization they join', () => {
+    // A membership pointing at a deleted user or organization would be a
+    // dangling grant.
+    expect(migration).toMatch(/memberships_user_id_fkey[\s\S]*?ON DELETE CASCADE/);
+    expect(migration).toMatch(/memberships_organization_id_fkey[\s\S]*?ON DELETE CASCADE/);
+  });
+
+  it('leaves the VG-003 migration untouched', () => {
+    // That migration is merged and may have been applied; changing it now
+    // would diverge from any database that already ran it.
+    const initial = readFileSync(
+      join(__dirname, '..', 'prisma', 'migrations', '20260830000000_init', 'migration.sql'),
+      'utf8',
+    );
+
+    expect(initial).not.toMatch(/\busers\b|\bmemberships\b/);
+  });
+});

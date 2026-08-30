@@ -23,9 +23,55 @@ model Organization {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  properties Property[]
+  properties  Property[]
+  memberships Membership[]
 
   @@map("organizations")
+}
+
+/// A person who signs in to the API (VG-004).
+///
+/// A user is not itself an owner of anything: ownership flows through
+/// `Membership`, so the hierarchy above keeps its single root.
+model User {
+  id String @id @default(cuid())
+  /// Normalized to lower case before storage, so uniqueness is not
+  /// case-sensitive. The database enforces this on the normalized value.
+  email String @unique
+  /// Salted hash only. See src/auth/password.service.ts for the encoding;
+  /// the plaintext is never stored, logged, or returned.
+  passwordHash String    @map("password_hash")
+  name         String
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  memberships Membership[]
+
+  @@map("users")
+}
+
+/// A user's membership of an organization, and their role in it.
+///
+/// Modelled as its own table rather than a column on `User` so a user can
+/// belong to more than one organization — an integrator managing several
+/// clients is a primary MVP user in docs/PRODUCT.md.
+model Membership {
+  id             String         @id @default(cuid())
+  userId         String         @map("user_id")
+  organizationId String         @map("organization_id")
+  role           MembershipRole @default(MEMBER)
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// A user holds exactly one role in a given organization.
+  @@unique([userId, organizationId])
+  @@index([userId])
+  @@index([organizationId])
+  @@map("memberships")
 }
 
 /// A villa, home, or building belonging to an organization.
@@ -128,6 +174,23 @@ model Device {
   @@index([propertyId])
   @@index([roomId])
   @@map("devices")
+}
+
+enum UserStatus {
+  ACTIVE
+  /// Retained for audit and referential integrity, but cannot sign in.
+  DISABLED
+
+  @@map("user_status")
+}
+
+enum MembershipRole {
+  /// Created the organization. Cannot be removed by another member.
+  OWNER
+  ADMIN
+  MEMBER
+
+  @@map("membership_role")
 }
 
 enum GatewayStatus {

@@ -1,5 +1,57 @@
 # MVP API Contract
 
+## Authentication
+
+Every endpoint below requires a bearer token unless it is listed as public.
+
+- POST `/v1/auth/register` — public
+- POST `/v1/auth/login` — public
+- GET `/v1/auth/me`
+- GET `/v1/health`, GET `/v1/health/ready` — public
+
+Register creates an organization, its first user, and an owner membership in
+one step; there is no separate organization endpoint in the MVP.
+
+```json
+POST /v1/auth/register
+{
+  "email": "owner@example.com",
+  "password": "at least 12 characters",
+  "name": "Owner",
+  "organizationName": "Example Villas"
+}
+```
+
+Register and login both return:
+
+```json
+{
+  "accessToken": "<jwt>",
+  "tokenType": "Bearer",
+  "expiresIn": 3600,
+  "user": {
+    "id": "user_1",
+    "email": "owner@example.com",
+    "name": "Owner",
+    "memberships": [{ "organizationId": "org_1", "role": "OWNER" }]
+  }
+}
+```
+
+Protected routes take the token in the standard header:
+
+```
+Authorization: Bearer <accessToken>
+```
+
+Every authentication failure — absent, malformed, expired, wrongly signed, or
+belonging to a disabled account — is a `401` with no explanation of which.
+Login answers a wrong password and an unknown address identically.
+
+Tokens are short-lived and there is no refresh endpoint yet: when one expires
+the client authenticates again. Roles are recorded on the membership but are
+not yet enforced as permissions.
+
 ## Gateway
 - POST `/v1/gateways/claim`
 - GET `/v1/gateways`
