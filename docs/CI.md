@@ -90,48 +90,79 @@ echo '{"title":"[VG-002] CI baseline","labels":["risk:low"],"checksPassed":true,
   | node tools/governance/dist/cli.js automerge
 ```
 
-## Required repository settings
+## Repository settings
 
-These are **repository settings, not files**, so they cannot be committed.
-They restrict direct pushes to `main`, so applying them is the repository
-owner's decision.
+These are repository settings rather than files, so they are recorded here for
+auditability. **All of them are applied.**
 
 ### Branch protection for `main`
 
-Settings → Branches → Add branch protection rule, pattern `main`:
-
-- **Require a pull request before merging** — required approvals: **1**
-- **Dismiss stale approvals when new commits are pushed**
-- **Require review from Code Owners**
-- **Require status checks to pass before merging**, and require branches to be
-  up to date. Required checks:
-  - `Repository policy`
-  - `Lint, typecheck, test, build`
-  - `Dependency audit`
-  - `Title and label policy`
-  - `CodeQL`
-- **Require conversation resolution before merging** — this is what makes "no
-  blocking review comments" enforceable rather than advisory
-- **Do not allow bypassing the above settings**
-- Leave force pushes and branch deletion disabled
-
-To apply with the GitHub CLI instead:
+Applied from `docs/branch-protection.json`:
 
 ```bash
 gh api -X PUT repos/CNXSmartHome/ai-voice-gateway/branches/main/protection \
   --input docs/branch-protection.json
 ```
 
-### Other settings
+| Setting | Value |
+| --- | --- |
+| Require a pull request before merging | yes |
+| Required approving reviews | **0** — see below |
+| Require conversation resolution | yes |
+| Require status checks, branch up to date | yes |
+| Required checks | `Repository policy`, `Lint, typecheck, test, build`, `Dependency audit`, `Title and label policy`, `CodeQL` |
+| Include administrators | yes |
+| Force pushes / deletions | disabled |
 
-- **General → Pull Requests** — enable **Allow auto-merge** (the auto-merge
-  workflow depends on it) and **Automatically delete head branches**
-- **Code security** — enable Dependabot alerts, Dependabot security updates,
-  secret scanning, and **push protection**
+**Why zero required approvals.** The repository currently has one human
+collaborator, who is also the author of every pull request. GitHub does not
+allow approving your own pull request, so requiring one approval — with
+administrators included and no bypass — would deadlock the repository: nothing
+could ever merge.
+
+Zero approvals does not mean no gate. A pull request is still required, every
+status check above must pass, conversations must be resolved, and
+administrators are not exempt. The gate is the pipeline, which is the model
+`AI_GOVERNANCE.md` describes.
+
+**When a second collaborator joins**, raise the bar to match the governance
+document by setting `required_approving_review_count` to `1` and
+`require_code_owner_reviews` to `true` in `docs/branch-protection.json`, then
+re-applying it.
+
+Note that until then, `auto-merge.yml` will not fire: it requires
+`reviewDecision == APPROVED`, which a self-authored pull request cannot reach.
+That is the fail-closed behaviour working as intended — pull requests get
+merged deliberately, by a person, once CI is green.
+
+### Security and analysis
+
+| Setting | State |
+| --- | --- |
+| Dependency graph | enabled — required by dependency review |
+| Dependabot alerts | enabled |
+| Dependabot security updates | enabled |
+| Secret scanning | enabled |
+| Secret scanning push protection | enabled |
 
 Push protection is worth calling out: it blocks a secret at push time rather
 than reporting it after the fact, which is the difference between a near miss
 and a credential rotation.
+
+### Pull requests
+
+| Setting | State |
+| --- | --- |
+| Allow auto-merge | enabled — `auto-merge.yml` depends on it |
+| Automatically delete head branches | enabled |
+| Allow squash merging | enabled |
+
+### This repository is public
+
+Everything here — code, issues, pull requests, CI logs — is world-readable.
+That raises the stakes on the secrets policy in `AI_GOVERNANCE.md`: a
+credential committed here is disclosed the moment it is pushed, and must be
+treated as compromised and rotated rather than merely removed from history.
 
 ## Why the policy is code
 
