@@ -3,6 +3,8 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import type { AuthenticatedUser } from '../auth/authenticated-user';
 import { PrismaService } from '../database/prisma.service';
 
+import { GatewaySecretService } from './gateway-secret.service';
+
 import { GATEWAY_SELECT, toGatewayView, type GatewayView } from './gateway.view';
 
 /**
@@ -46,7 +48,10 @@ export interface ClaimGatewayInput {
 
 @Injectable()
 export class GatewaysService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly secrets: GatewaySecretService,
+  ) {}
 
   /**
    * Claims an unclaimed gateway into a property the caller administers.
@@ -134,24 +139,35 @@ export class GatewaysService {
   }
 
   /**
-   * Records a manufactured gateway, so there is something to claim.
+   * Records a manufactured gateway and issues its device credential.
    *
    * Deliberately has no HTTP route: creating unclaimed hardware is a
    * manufacturing intake action, not a customer one. Exposing it would need
    * an operator role and an admin authorization surface that does not exist
    * yet, and inventing one here would be a security-model decision beyond
    * this task. Driven by `scripts/register-gateway.js`.
+   *
+   * The gateway and its credential are created together, so a gateway can
+   * never exist without a way to connect. The returned secret is the only
+   * copy — only its hash is stored, and the caller is expected to flash it to
+   * the device and discard it.
    */
-  async register(input: { serialNumber: string; name?: string }): Promise<GatewayView> {
+  async register(input: {
+    serialNumber: string;
+    name?: string;
+  }): Promise<{ gateway: GatewayView; secret: string }> {
+    const { secret, secretHash } = this.secrets.generate();
+
     const gateway = await this.prisma.gateway.create({
       data: {
         serialNumber: input.serialNumber,
         name: input.name ?? input.serialNumber,
+        credential: { create: { secretHash } },
       },
       select: GATEWAY_SELECT,
     });
 
-    return toGatewayView(gateway);
+    return { gateway: toGatewayView(gateway), secret };
   }
 
   /**

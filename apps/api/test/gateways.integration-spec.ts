@@ -665,7 +665,7 @@ describeWithDb('gateway claim (integration)', () => {
       const { property } = await createProperty(owner.organizationId, 'registered');
       const serialNumber = `VG100-${unique('reg')}`.slice(0, 64);
 
-      const registered = await app.get(GatewaysService).register({ serialNumber });
+      const { gateway: registered } = await app.get(GatewaysService).register({ serialNumber });
       createdGatewayIds.push(registered.id);
 
       expect(registered).toMatchObject({
@@ -690,7 +690,7 @@ describeWithDb('gateway claim (integration)', () => {
       const gateways = app.get(GatewaysService);
 
       const first = await gateways.register({ serialNumber });
-      createdGatewayIds.push(first.id);
+      createdGatewayIds.push(first.gateway.id);
 
       await expect(gateways.register({ serialNumber })).rejects.toThrow();
     });

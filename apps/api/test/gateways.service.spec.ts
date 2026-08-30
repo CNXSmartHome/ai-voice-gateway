@@ -2,6 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../src/auth/authenticated-user';
 import type { PrismaService } from '../src/database/prisma.service';
+import { GatewaySecretService } from '../src/gateways/gateway-secret.service';
 import { CLAIM_ROLES, GatewaysService } from '../src/gateways/gateways.service';
 
 /**
@@ -56,10 +57,13 @@ describe('GatewaysService', () => {
       },
     };
 
-    service = new GatewaysService({
-      $transaction: (callback: (client: unknown) => unknown) => callback(tx),
-      gateway: { create: gatewayCreate },
-    } as unknown as PrismaService);
+    service = new GatewaysService(
+      {
+        $transaction: (callback: (client: unknown) => unknown) => callback(tx),
+        gateway: { create: gatewayCreate },
+      } as unknown as PrismaService,
+      new GatewaySecretService(),
+    );
   });
 
   const INPUT = { serialNumber: 'VG100-0001', propertyId: 'prop_1' };
@@ -153,10 +157,10 @@ describe('GatewaysService', () => {
         }),
       );
 
-      await new GatewaysService({ $transaction: transaction } as unknown as PrismaService).claim(
-        OWNER,
-        INPUT,
-      );
+      await new GatewaysService(
+        { $transaction: transaction } as unknown as PrismaService,
+        new GatewaySecretService(),
+      ).claim(OWNER, INPUT);
 
       expect(transaction).toHaveBeenCalledTimes(1);
     });
@@ -306,11 +310,39 @@ describe('GatewaysService', () => {
     it('creates an unclaimed gateway named after its serial by default', async () => {
       await service.register({ serialNumber: 'VG100-0002' });
 
-      expect(gatewayCreate).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: { serialNumber: 'VG100-0002', name: 'VG100-0002' },
-        }),
-      );
+      const data = gatewayCreate.mock.calls[0]?.[0]?.data as Record<string, unknown>;
+      expect(data.serialNumber).toBe('VG100-0002');
+      expect(data.name).toBe('VG100-0002');
+    });
+
+    it('issues a device credential alongside the gateway', async () => {
+      // One create, so a gateway can never exist without a way to connect.
+      await service.register({ serialNumber: 'VG100-0002' });
+
+      const data = gatewayCreate.mock.calls[0]?.[0]?.data as {
+        credential: { create: { secretHash: string } };
+      };
+      expect(data.credential.create.secretHash).toMatch(/^sha256\$v=1\$/);
+    });
+
+    it('returns the secret to the caller and stores only its hash', async () => {
+      // The plaintext exists once, for flashing to the device. Nothing
+      // persists it, so it cannot be recovered later.
+      const { secret } = await service.register({ serialNumber: 'VG100-0002' });
+
+      const data = gatewayCreate.mock.calls[0]?.[0]?.data as {
+        credential: { create: { secretHash: string } };
+      };
+      expect(secret).not.toBe('');
+      expect(data.credential.create.secretHash).not.toContain(secret);
+      expect(JSON.stringify(data)).not.toContain(secret);
+    });
+
+    it('issues a distinct secret per gateway', async () => {
+      const first = await service.register({ serialNumber: 'VG100-0002' });
+      const second = await service.register({ serialNumber: 'VG100-0003' });
+
+      expect(first.secret).not.toBe(second.secret);
     });
 
     it('accepts a name', async () => {

@@ -165,7 +165,88 @@ Example command:
 - `activate_scene(scene_id)`
 
 ## WebSocket
-Gateway endpoint concept:
+
+Gateway session endpoint — implemented (VG-006):
+
 `wss://api.example.com/v1/gateway/session`
 
 Session must bind authenticated gateway_id and room_id before AI tool execution.
+
+### Device authentication
+
+A gateway authenticates with its serial number and the device secret issued at
+manufacture, on the upgrade request:
+
+```
+Authorization: Gateway <serialNumber>:<secret>
+```
+
+Its own scheme, not `Bearer`, so a device credential and a user access token
+can never be presented interchangeably. A user token does not parse here, and
+a device secret is meaningless to the HTTP API.
+
+Authentication happens **during the HTTP upgrade**. A device that fails it
+never becomes a WebSocket: the handshake is refused with `401`, rather than
+being accepted and then closed. An unknown serial number, a wrong secret, an
+unclaimed gateway, and a disabled one are all refused identically — separating
+them would let anyone enumerate which serial numbers exist and which are in
+service.
+
+Only a **claimed, non-disabled** gateway may open a session. An unclaimed one
+has no property and therefore no room context.
+
+### Messages
+
+The gateway is greeted with its identity and how often to report:
+
+```json
+{ "type": "ready", "gatewayId": "gw_1", "roomId": "room_1", "heartbeatIntervalSeconds": 30 }
+```
+
+It then sends heartbeats, optionally reporting its firmware version:
+
+```json
+{ "type": "heartbeat", "firmwareVersion": "1.2.3" }
+```
+
+and receives:
+
+```json
+{ "type": "heartbeat_ack", "serverTime": "2026-08-30T12:00:00.000Z" }
+```
+
+A heartbeat refreshes `last_seen_at` and records firmware only. It can never
+move a gateway between properties or rooms — a device saying it is still there
+must not be able to reassign itself.
+
+An unparseable or unknown frame closes the connection with `4400`, rather than
+being ignored: both ends are one implementation, so a frame neither
+understands means they are out of step. Binary frames are rejected — audio has
+its own task (VG-018).
+
+### Status lifecycle
+
+| Event | Status |
+| --- | --- |
+| Claimed (VG-005) | `OFFLINE` |
+| Authenticated connect | `ONLINE` |
+| Heartbeat | stays `ONLINE`, `last_seen_at` advances |
+| Clean disconnect | `OFFLINE` |
+| Stopped answering pings | closed with `4408`, then `OFFLINE` |
+
+A gateway disabled while connected stays `DISABLED` when its socket drops:
+taking hardware out of service survives a disconnect.
+
+The server pings idle connections every `GATEWAY_HEARTBEAT_INTERVAL_SECONDS`.
+A device that loses power never sends a close frame, so without this it would
+read `ONLINE` indefinitely — worse than useless, since the app would show it
+as reachable.
+
+### Issuing a device secret
+
+Done at manufacture, alongside registration. The secret is printed once and
+only its hash is stored, so it cannot be recovered:
+
+```
+npm run gateway:register --workspace @vg/api -- VG100-0001 "VG-100"
+```

@@ -142,10 +142,40 @@ model Gateway {
   property Property? @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   // A room may be deleted while a gateway survives, unassigned.
   room     Room?     @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  // Device identity for the session transport (VG-006). Absent until the
+  // gateway is registered with a credential.
+  credential GatewayCredential?
 
   @@index([propertyId])
   @@index([roomId])
   @@map("gateways")
+}
+
+/// The secret a gateway proves its identity with when opening a session
+/// (VG-006).
+///
+/// Its own table rather than a column on `Gateway`, so the boundary that
+/// record holds no credentials stays true and testable. It also gives the
+/// credential a lifecycle of its own: rotating or revoking one does not touch
+/// the hardware row that everything else references.
+///
+/// Only the hash is stored. The plaintext exists once, at manufacture, when
+/// it is flashed to the device -- the cloud cannot reproduce it.
+model GatewayCredential {
+  id String @id @default(cuid())
+  /// One active credential per gateway. Rotation is a later task and will
+  /// relax this.
+  gatewayId  String   @unique @map("gateway_id")
+  secretHash String   @map("secret_hash")
+  /// Refreshed when the credential authenticates a session, so an unused
+  /// credential is visible.
+  lastUsedAt DateTime? @map("last_used_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  gateway Gateway @relation(fields: [gatewayId], references: [id], onDelete: Cascade)
+
+  @@map("gateway_credentials")
 }
 
 /// A controllable device, normalized away from its source platform.
