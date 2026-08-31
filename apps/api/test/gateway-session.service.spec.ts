@@ -69,6 +69,8 @@ describe('GatewaySessionService', () => {
   let updateMany: jest.Mock;
   /** `tx.gateway.updateMany`: the guarded connect transition. */
   let transitionMany: jest.Mock;
+  /** `tx.gateway.findUniqueOrThrow`: the session context, read after it. */
+  let readBack: jest.Mock;
   let credentialUpdate: jest.Mock;
   let transaction: jest.Mock;
   let service: GatewaySessionService;
@@ -77,13 +79,18 @@ describe('GatewaySessionService', () => {
     findUnique = jest.fn().mockResolvedValue(CLAIMED);
     updateMany = jest.fn().mockResolvedValue({ count: 1 });
     transitionMany = jest.fn().mockResolvedValue({ count: 1 });
+    readBack = jest.fn().mockResolvedValue({
+      serialNumber: CLAIMED.serialNumber,
+      propertyId: CLAIMED.propertyId,
+      roomId: CLAIMED.roomId,
+    });
     credentialUpdate = jest.fn().mockResolvedValue({});
 
     // Runs the callback, so the guard inside the transaction is exercised
     // rather than stubbed past.
     transaction = jest.fn().mockImplementation((run: (tx: unknown) => unknown) =>
       run({
-        gateway: { updateMany: transitionMany },
+        gateway: { updateMany: transitionMany, findUniqueOrThrow: readBack },
         gatewayCredential: { update: credentialUpdate },
       }),
     );
@@ -152,6 +159,62 @@ describe('GatewaySessionService', () => {
       // Nothing was written, including the credential use: a refused
       // connection must leave no trace of having nearly succeeded.
       expect(credentialUpdate).not.toHaveBeenCalled();
+      expect(readBack).not.toHaveBeenCalled();
+    });
+
+    /*
+     * A gateway's room is its voice context -- it is what turns "turn on the
+     * light" into a specific device. A room read before the transition could
+     * already be stale by the time the session exists, and the session would
+     * go on sending commands to the wrong room for as long as it lasted.
+     *
+     * A reassignment is not a reason to refuse the connection; it is a reason
+     * to use the new room. The update holds a lock on the row until commit,
+     * so what is read here cannot change underneath it.
+     */
+    it('carries the room read after the transition, not the one read before it', async () => {
+      readBack.mockResolvedValue({
+        serialNumber: 'VG100-0001',
+        propertyId: 'prop_1',
+        roomId: 'room_moved',
+      });
+
+      await expect(service.authenticate(PRESENTED)).resolves.toEqual({
+        gatewayId: 'gw_1',
+        serialNumber: 'VG100-0001',
+        propertyId: 'prop_1',
+        roomId: 'room_moved',
+      });
+    });
+
+    it('reads the room back only after the transition has succeeded', async () => {
+      await service.authenticate(PRESENTED);
+
+      const transitionOrder = transitionMany.mock.invocationCallOrder[0] ?? 0;
+      const readOrder = readBack.mock.invocationCallOrder[0] ?? 0;
+      expect(readOrder).toBeGreaterThan(transitionOrder);
+    });
+
+    it('carries a gateway with no room as having none', async () => {
+      readBack.mockResolvedValue({
+        serialNumber: 'VG100-0001',
+        propertyId: 'prop_1',
+        roomId: null,
+      });
+
+      await expect(service.authenticate(PRESENTED)).resolves.toMatchObject({ roomId: null });
+    });
+
+    it('refuses a gateway that lost its property inside the transaction', async () => {
+      // Cannot happen while the guard holds, and refused rather than trusted
+      // if it ever does: a session with no property has no room context.
+      readBack.mockResolvedValue({
+        serialNumber: 'VG100-0001',
+        propertyId: null,
+        roomId: null,
+      });
+
+      await expect(service.authenticate(PRESENTED)).resolves.toBeNull();
     });
 
     it('rejects a wrong secret', async () => {

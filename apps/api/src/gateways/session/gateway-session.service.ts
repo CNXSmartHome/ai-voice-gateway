@@ -105,11 +105,34 @@ export class GatewaySessionService {
         data: { lastUsedAt: new Date() },
       });
 
+      /*
+       * The room is read back here, after the transition, rather than carried
+       * from the row read before it.
+       *
+       * A gateway's room is its voice context: it is what turns "turn on the
+       * light" into a specific device, so a session holding the room the
+       * gateway was in a moment ago would send commands to the wrong place —
+       * and would go on doing it for as long as the session lasted. The guard
+       * above pins ownership but says nothing about the room, and a
+       * reassignment is not a reason to refuse a connection: it is a reason
+       * to use the new room.
+       *
+       * The update holds a lock on this row until commit, so what is read
+       * here cannot change underneath it. Whatever the session carries was
+       * true at the moment the gateway came online.
+       */
+      const current = await tx.gateway.findUniqueOrThrow({
+        where: { id: gatewayId },
+        select: { serialNumber: true, propertyId: true, roomId: true },
+      });
+
+      if (current.propertyId === null) return null;
+
       return {
         gatewayId,
-        serialNumber: gateway.serialNumber,
-        propertyId,
-        roomId: gateway.roomId,
+        serialNumber: current.serialNumber,
+        propertyId: current.propertyId,
+        roomId: current.roomId,
       };
     });
 

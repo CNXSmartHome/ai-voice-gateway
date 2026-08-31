@@ -203,6 +203,14 @@ The gateway is greeted with its identity and how often to report:
 { "type": "ready", "gatewayId": "gw_1", "roomId": "room_1", "heartbeatIntervalSeconds": 30 }
 ```
 
+`roomId` is the room the gateway is in **at the moment it comes online**, not
+the one it was in when the request arrived. The room is the voice context —
+it is what turns "turn on the light" into a specific device — and a session
+lasts as long as the device stays connected, so a room read before the status
+transition could send commands to the wrong place for hours. It is read back
+inside the same transaction, after the transition, while the row is still
+locked. A gateway with no room reports `null`; assigning one is VG-013.
+
 It then sends heartbeats, optionally reporting its firmware version:
 
 ```json

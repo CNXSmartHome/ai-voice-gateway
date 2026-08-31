@@ -39,11 +39,17 @@ describe('gateway session transport (integration)', () => {
   let findUnique: jest.Mock;
   let updateMany: jest.Mock;
   let transitionMany: jest.Mock;
+  let readBack: jest.Mock;
 
   beforeAll(async () => {
     findUnique = jest.fn().mockResolvedValue(GATEWAY);
     updateMany = jest.fn().mockResolvedValue({ count: 1 });
     transitionMany = jest.fn().mockResolvedValue({ count: 1 });
+    readBack = jest.fn().mockResolvedValue({
+      serialNumber: GATEWAY.serialNumber,
+      propertyId: GATEWAY.propertyId,
+      roomId: GATEWAY.roomId,
+    });
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(PrismaService)
@@ -56,7 +62,7 @@ describe('gateway session transport (integration)', () => {
         // that the guard would have refused.
         $transaction: jest.fn().mockImplementation((run: (tx: unknown) => unknown) =>
           run({
-            gateway: { updateMany: transitionMany },
+            gateway: { updateMany: transitionMany, findUniqueOrThrow: readBack },
             gatewayCredential: { update: jest.fn().mockResolvedValue({}) },
           }),
         ),
@@ -79,6 +85,11 @@ describe('gateway session transport (integration)', () => {
     findUnique.mockResolvedValue(GATEWAY);
     updateMany.mockClear().mockResolvedValue({ count: 1 });
     transitionMany.mockClear().mockResolvedValue({ count: 1 });
+    readBack.mockClear().mockResolvedValue({
+      serialNumber: GATEWAY.serialNumber,
+      propertyId: GATEWAY.propertyId,
+      roomId: GATEWAY.roomId,
+    });
   });
 
   function connect(options: { authorization?: string; path?: string } = {}): WebSocket {

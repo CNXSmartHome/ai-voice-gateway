@@ -201,6 +201,54 @@ describeWithDb('gateway session lifecycle (integration)', () => {
       await closed(socket);
     });
 
+    /*
+     * The room is read before the status transition and the session lives for
+     * as long as the device stays connected, so a reassignment in between
+     * would leave the session sending commands to the room the gateway used
+     * to be in -- for hours, silently, and with no way for the device to
+     * notice.
+     *
+     * A reassignment is not a reason to refuse the connection; it is a reason
+     * to use the new room. The window is opened deliberately rather than
+     * raced for: the transition happens inside the service transaction, so
+     * moving the gateway immediately before that transaction runs places the
+     * change exactly where a real one would have to land.
+     */
+    it('is told the room it is in now, not the one it was in when the request arrived', async () => {
+      const { gateway, secret, property, room } = await claimedGateway('room-race');
+      const destination = await prisma.room.create({
+        data: { propertyId: property.id, name: `Room ${unique('room-race-2')}` },
+      });
+
+      const runTransaction = prisma.$transaction.bind(prisma) as (argument: unknown) => unknown;
+      const intercept = jest
+        .spyOn(prisma, '$transaction')
+        .mockImplementation(async (argument: unknown) => {
+          intercept.mockRestore();
+          await prisma.gateway.update({
+            where: { id: gateway.id },
+            data: { roomId: destination.id },
+          });
+          return runTransaction(argument);
+        }) as unknown as jest.SpyInstance;
+
+      const socket = connect(gateway.serialNumber, secret);
+      let ready: Record<string, unknown>;
+      try {
+        ready = await opened(socket);
+      } finally {
+        intercept.mockRestore();
+        // Closed before the assertions, not after. A regression here still
+        // opens the socket, and one left open holds the server up in
+        // afterAll -- turning a failed assertion into a hung suite.
+        socket.close();
+        await closed(socket);
+      }
+
+      expect(ready).toMatchObject({ roomId: destination.id });
+      expect(ready.roomId).not.toBe(room.id);
+    });
+
     it('refuses a wrong secret and leaves the gateway offline', async () => {
       const { gateway } = await claimedGateway('wrong-secret');
 
