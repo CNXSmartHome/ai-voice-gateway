@@ -37,13 +37,13 @@ describe('gateway session transport (integration)', () => {
   let app: INestApplication;
   let port: number;
   let findUnique: jest.Mock;
-  let update: jest.Mock;
   let updateMany: jest.Mock;
+  let transitionMany: jest.Mock;
 
   beforeAll(async () => {
     findUnique = jest.fn().mockResolvedValue(GATEWAY);
-    update = jest.fn().mockResolvedValue(GATEWAY);
     updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    transitionMany = jest.fn().mockResolvedValue({ count: 1 });
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(PrismaService)
@@ -51,9 +51,17 @@ describe('gateway session transport (integration)', () => {
         isReachable: jest.fn().mockResolvedValue(true),
         $connect: jest.fn().mockResolvedValue(undefined),
         $disconnect: jest.fn().mockResolvedValue(undefined),
-        $transaction: jest.fn().mockResolvedValue([]),
+        // Runs the callback: the connect transition is guarded inside a
+        // transaction, and a stub that skipped it would let a session exist
+        // that the guard would have refused.
+        $transaction: jest.fn().mockImplementation((run: (tx: unknown) => unknown) =>
+          run({
+            gateway: { updateMany: transitionMany },
+            gatewayCredential: { update: jest.fn().mockResolvedValue({}) },
+          }),
+        ),
         user: { findUnique: jest.fn().mockResolvedValue(null) },
-        gateway: { findUnique, update, updateMany },
+        gateway: { findUnique, updateMany },
         gatewayCredential: { update: jest.fn().mockResolvedValue({}) },
       })
       .compile();
@@ -69,8 +77,8 @@ describe('gateway session transport (integration)', () => {
 
   beforeEach(() => {
     findUnique.mockResolvedValue(GATEWAY);
-    update.mockClear();
-    updateMany.mockClear();
+    updateMany.mockClear().mockResolvedValue({ count: 1 });
+    transitionMany.mockClear().mockResolvedValue({ count: 1 });
   });
 
   function connect(options: { authorization?: string; path?: string } = {}): WebSocket {
@@ -152,7 +160,7 @@ describe('gateway session transport (integration)', () => {
       socket.send(JSON.stringify({ type: 'heartbeat', firmwareVersion: '2.1.0' }));
       await ack;
 
-      expect(update).toHaveBeenCalledWith(
+      expect(updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ firmwareVersion: '2.1.0' }),
         }),
@@ -254,12 +262,12 @@ describe('gateway session transport (integration)', () => {
     });
 
     it('does not mark anything online', async () => {
-      update.mockClear();
+      transitionMany.mockClear();
       findUnique.mockResolvedValue(null);
 
       await refused(connect());
 
-      expect(update).not.toHaveBeenCalled();
+      expect(transitionMany).not.toHaveBeenCalled();
     });
   });
 

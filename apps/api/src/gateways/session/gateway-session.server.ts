@@ -213,7 +213,19 @@ export class GatewaySessionServer implements OnApplicationShutdown {
     connection.awaitingPong = false;
 
     try {
-      await this.sessions.recordHeartbeat(connection.session.gatewayId, message.firmwareVersion);
+      const stillEntitled = await this.sessions.recordHeartbeat(
+        connection.session.gatewayId,
+        message.firmwareVersion,
+      );
+
+      if (!stillEntitled) {
+        // The gateway was disabled, or otherwise lost the standing it
+        // connected with, while this session was open. Closed with the same
+        // code as a failed authentication: it is the same answer, arrived at
+        // later, and the device should reconnect and be refused at the door.
+        connection.socket.close(CLOSE_UNAUTHORIZED, CLOSE_UNAUTHORIZED_REASON);
+        return;
+      }
     } catch (error) {
       this.logger.error('Heartbeat failed', error instanceof Error ? error.stack : '');
       return;

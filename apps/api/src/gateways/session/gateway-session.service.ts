@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { GatewayStatus } from '@prisma/client';
 
 import { PrismaService } from '../../database/prisma.service';
 import { GatewaySecretService } from '../gateway-secret.service';
@@ -6,8 +7,8 @@ import { GatewaySecretService } from '../gateway-secret.service';
 import type { PresentedCredentials } from './gateway-session.protocol';
 
 /** Statuses a gateway may hold a session in, once authenticated. */
-const ONLINE = 'ONLINE';
-const OFFLINE = 'OFFLINE';
+const ONLINE: GatewayStatus = 'ONLINE';
+const OFFLINE: GatewayStatus = 'OFFLINE';
 
 /**
  * Statuses from which a gateway may open a session.
@@ -16,7 +17,7 @@ const OFFLINE = 'OFFLINE';
  * admitting one would let a manufactured-but-unsold unit connect to the
  * platform. `DISABLED` is excluded because that is what disabling means.
  */
-const CONNECTABLE_STATUSES = [ONLINE, OFFLINE];
+const CONNECTABLE_STATUSES: GatewayStatus[] = [ONLINE, OFFLINE];
 
 /** The authenticated gateway behind a session. */
 export interface GatewaySession {
@@ -70,23 +71,49 @@ export class GatewaySessionService {
     if (!CONNECTABLE_STATUSES.includes(gateway.status)) return null;
     if (gateway.propertyId === null) return null;
 
-    await this.prisma.$transaction([
-      this.prisma.gateway.update({
-        where: { id: gateway.id },
-        data: { status: ONLINE, lastSeenAt: new Date() },
-      }),
-      this.prisma.gatewayCredential.update({
-        where: { id: gateway.credential.id },
-        data: { lastUsedAt: new Date() },
-      }),
-    ]);
+    const { id: gatewayId, propertyId } = gateway;
+    const credentialId = gateway.credential.id;
 
-    return {
-      gatewayId: gateway.id,
-      serialNumber: gateway.serialNumber,
-      propertyId: gateway.propertyId,
-      roomId: gateway.roomId,
-    };
+    /*
+     * The checks above read a row; this writes one, and an administrator can
+     * disable a gateway in between. An unconditional update would then put
+     * `DISABLED` back to `ONLINE` — taking a gateway out of service would
+     * silently fail against a device that reconnects, which is precisely the
+     * situation where someone is relying on it.
+     *
+     * So the transition carries its own conditions and is refused unless the
+     * persisted row still satisfies them. `propertyId` is pinned to the value
+     * that was read rather than merely required to be present, so the session
+     * this returns cannot describe a property the gateway no longer belongs
+     * to. Nothing is written when the guard does not match, and the caller
+     * treats that as an authentication failure like any other.
+     */
+    const session = await this.prisma.$transaction(async (tx) => {
+      const transitioned = await tx.gateway.updateMany({
+        where: {
+          id: gatewayId,
+          status: { in: CONNECTABLE_STATUSES },
+          propertyId,
+        },
+        data: { status: ONLINE, lastSeenAt: new Date() },
+      });
+
+      if (transitioned.count !== 1) return null;
+
+      await tx.gatewayCredential.update({
+        where: { id: credentialId },
+        data: { lastUsedAt: new Date() },
+      });
+
+      return {
+        gatewayId,
+        serialNumber: gateway.serialNumber,
+        propertyId,
+        roomId: gateway.roomId,
+      };
+    });
+
+    return session;
   }
 
   /**
@@ -95,16 +122,27 @@ export class GatewaySessionService {
    * Touches only liveness columns. A heartbeat is the device saying it is
    * still there; it must never be able to move a gateway between properties
    * or rooms, so ownership is not writable from this path.
+   *
+   * Guarded on the gateway still being `ONLINE`, for the same reason
+   * `authenticate` is guarded: a gateway disabled during a live session would
+   * otherwise be restored to `ONLINE` by its next heartbeat, and a device
+   * that heartbeats every thirty seconds would undo the change faster than
+   * anyone could notice it had not taken.
+   *
+   * Returns false when the gateway is no longer entitled to the session it
+   * holds. The caller closes the socket: leaving a disabled gateway with a
+   * live connection is the same failure by another route.
    */
-  async recordHeartbeat(gatewayId: string, firmwareVersion?: string): Promise<void> {
-    await this.prisma.gateway.update({
-      where: { id: gatewayId },
+  async recordHeartbeat(gatewayId: string, firmwareVersion?: string): Promise<boolean> {
+    const updated = await this.prisma.gateway.updateMany({
+      where: { id: gatewayId, status: ONLINE },
       data: {
         lastSeenAt: new Date(),
-        status: ONLINE,
         ...(firmwareVersion === undefined ? {} : { firmwareVersion }),
       },
     });
+
+    return updated.count === 1;
   }
 
   /**

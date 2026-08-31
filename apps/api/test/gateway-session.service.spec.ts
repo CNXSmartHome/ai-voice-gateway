@@ -65,22 +65,32 @@ describe('GatewaySessionService', () => {
   };
 
   let findUnique: jest.Mock;
-  let update: jest.Mock;
+  /** `prisma.gateway.updateMany`: heartbeats and going offline. */
   let updateMany: jest.Mock;
+  /** `tx.gateway.updateMany`: the guarded connect transition. */
+  let transitionMany: jest.Mock;
   let credentialUpdate: jest.Mock;
   let transaction: jest.Mock;
   let service: GatewaySessionService;
 
   beforeEach(() => {
     findUnique = jest.fn().mockResolvedValue(CLAIMED);
-    update = jest.fn().mockResolvedValue(CLAIMED);
     updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    transitionMany = jest.fn().mockResolvedValue({ count: 1 });
     credentialUpdate = jest.fn().mockResolvedValue({});
-    transaction = jest.fn().mockResolvedValue([]);
+
+    // Runs the callback, so the guard inside the transaction is exercised
+    // rather than stubbed past.
+    transaction = jest.fn().mockImplementation((run: (tx: unknown) => unknown) =>
+      run({
+        gateway: { updateMany: transitionMany },
+        gatewayCredential: { update: credentialUpdate },
+      }),
+    );
 
     service = new GatewaySessionService(
       {
-        gateway: { findUnique, update, updateMany },
+        gateway: { findUnique, updateMany },
         gatewayCredential: { update: credentialUpdate },
         $transaction: transaction,
       } as unknown as PrismaService,
@@ -106,10 +116,42 @@ describe('GatewaySessionService', () => {
       await service.authenticate(PRESENTED);
 
       expect(transaction).toHaveBeenCalledTimes(1);
-      expect(update).toHaveBeenCalledWith(
+      expect(transitionMany).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ status: 'ONLINE' }) }),
       );
       expect(credentialUpdate).toHaveBeenCalled();
+    });
+
+    /*
+     * The checks read a row and the transition writes one, and an
+     * administrator can disable a gateway in between. An unconditional write
+     * would put DISABLED back to ONLINE, so taking hardware out of service
+     * would fail against exactly the device that keeps reconnecting.
+     */
+    it('carries its conditions into the write rather than trusting the read', async () => {
+      await service.authenticate(PRESENTED);
+
+      expect(transitionMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            id: 'gw_1',
+            status: { in: ['ONLINE', 'OFFLINE'] },
+            // Pinned to the value that was read, not merely required to be
+            // present, so the session returned cannot name a property the
+            // gateway has since left.
+            propertyId: 'prop_1',
+          },
+        }),
+      );
+    });
+
+    it('refuses the session when the guarded transition matches nothing', async () => {
+      transitionMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.authenticate(PRESENTED)).resolves.toBeNull();
+      // Nothing was written, including the credential use: a refused
+      // connection must leave no trace of having nearly succeeded.
+      expect(credentialUpdate).not.toHaveBeenCalled();
     });
 
     it('rejects a wrong secret', async () => {
@@ -186,24 +228,49 @@ describe('GatewaySessionService', () => {
   });
 
   describe('recordHeartbeat', () => {
-    it('advances last seen and keeps the gateway online', async () => {
+    it('advances last seen', async () => {
+      await expect(service.recordHeartbeat('gw_1')).resolves.toBe(true);
+
+      const data = updateMany.mock.calls[0]?.[0]?.data as Record<string, unknown>;
+      expect(data.lastSeenAt).toBeInstanceOf(Date);
+    });
+
+    /*
+     * The same race as the connect transition, arrived at from the other
+     * side: a gateway disabled during a live session would otherwise put
+     * itself back to ONLINE on its next heartbeat, undoing the change within
+     * the heartbeat interval.
+     */
+    it('only applies to a gateway that is still online', async () => {
       await service.recordHeartbeat('gw_1');
 
-      const data = update.mock.calls[0]?.[0]?.data as Record<string, unknown>;
-      expect(data.status).toBe('ONLINE');
-      expect(data.lastSeenAt).toBeInstanceOf(Date);
+      expect(updateMany.mock.calls[0]?.[0]?.where).toEqual({ id: 'gw_1', status: 'ONLINE' });
+    });
+
+    it('reports a gateway that no longer holds the standing it connected with', async () => {
+      updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.recordHeartbeat('gw_1')).resolves.toBe(false);
+    });
+
+    it('does not write the status it is guarded on', async () => {
+      // Writing ONLINE here would be the resurrection this guard exists to
+      // prevent, reintroduced as a redundant assignment.
+      await service.recordHeartbeat('gw_1');
+
+      expect(updateMany.mock.calls[0]?.[0]?.data).not.toHaveProperty('status');
     });
 
     it('records a reported firmware version', async () => {
       await service.recordHeartbeat('gw_1', '1.4.0');
 
-      expect(update.mock.calls[0]?.[0]?.data?.firmwareVersion).toBe('1.4.0');
+      expect(updateMany.mock.calls[0]?.[0]?.data?.firmwareVersion).toBe('1.4.0');
     });
 
     it('leaves firmware alone when none is reported', async () => {
       await service.recordHeartbeat('gw_1');
 
-      expect(update.mock.calls[0]?.[0]?.data).not.toHaveProperty('firmwareVersion');
+      expect(updateMany.mock.calls[0]?.[0]?.data).not.toHaveProperty('firmwareVersion');
     });
 
     it('never writes ownership from a heartbeat', async () => {
@@ -211,7 +278,7 @@ describe('GatewaySessionService', () => {
       // between properties or rooms.
       await service.recordHeartbeat('gw_1', '1.4.0');
 
-      const data = update.mock.calls[0]?.[0]?.data as Record<string, unknown>;
+      const data = updateMany.mock.calls[0]?.[0]?.data as Record<string, unknown>;
       expect(data).not.toHaveProperty('propertyId');
       expect(data).not.toHaveProperty('roomId');
       expect(data).not.toHaveProperty('serialNumber');

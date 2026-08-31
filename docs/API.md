@@ -233,9 +233,17 @@ its own task (VG-018).
 | Heartbeat | stays `ONLINE`, `last_seen_at` advances |
 | Clean disconnect | `OFFLINE` |
 | Stopped answering pings | closed with `4408`, then `OFFLINE` |
+| Disabled during a session | closed with `4401`, stays `DISABLED` |
 
-A gateway disabled while connected stays `DISABLED` when its socket drops:
-taking hardware out of service survives a disconnect.
+**Disabling a gateway takes effect immediately, and stays in effect.** Both
+writes that could undo it are conditional on the state they were decided from:
+the connect transition is refused if the gateway is no longer connectable, and
+a heartbeat that finds the gateway no longer `ONLINE` closes the session
+instead of restoring it. Without those guards, an administrator disabling a
+connected gateway would be overwritten by its next heartbeat — within seconds,
+and silently, against exactly the device someone is trying to take out of
+service. A gateway disabled while connected also stays `DISABLED` when its
+socket drops.
 
 The server pings idle connections every `GATEWAY_HEARTBEAT_INTERVAL_SECONDS`.
 A device that loses power never sends a close frame, so without this it would

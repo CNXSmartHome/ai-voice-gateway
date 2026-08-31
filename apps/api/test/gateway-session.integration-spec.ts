@@ -249,6 +249,63 @@ describeWithDb('gateway session lifecycle (integration)', () => {
 
       expect(await statusOf(gateway.id)).toBe('DISABLED');
     });
+
+    /*
+     * Authentication reads the gateway, then writes it online. An
+     * administrator disabling it in between must win, or taking a gateway out
+     * of service silently fails against exactly the device that keeps
+     * reconnecting.
+     *
+     * The window is opened deliberately rather than raced for: the write
+     * happens inside the service's transaction, so intercepting the first
+     * transaction and disabling the row immediately before it runs puts the
+     * change precisely where a real administrator's would have to land.
+     */
+    it('refuses a connect when the gateway is disabled between the read and the write', async () => {
+      const { gateway, secret } = await claimedGateway('connect-race');
+
+      const runTransaction = prisma.$transaction.bind(prisma) as (argument: unknown) => unknown;
+      const intercept = jest
+        .spyOn(prisma, '$transaction')
+        .mockImplementation(async (argument: unknown) => {
+          intercept.mockRestore();
+          await prisma.gateway.update({
+            where: { id: gateway.id },
+            data: { status: 'DISABLED' },
+          });
+          return runTransaction(argument);
+        }) as unknown as jest.SpyInstance;
+
+      const socket = connect(gateway.serialNumber, secret);
+      let handshakeSucceeded = false;
+      socket.once('open', () => {
+        handshakeSucceeded = true;
+      });
+
+      try {
+        await refused(socket);
+      } finally {
+        intercept.mockRestore();
+        if (handshakeSucceeded) {
+          // Only reachable if the guard regressed. Closed properly anyway, so
+          // the failure is an assertion rather than a suite that hangs on a
+          // socket holding the server open in afterAll.
+          socket.close();
+          await closed(socket);
+        } else {
+          // A refused handshake has already emitted its error and may have
+          // emitted its close; waiting for another event would wait forever.
+          socket.terminate();
+        }
+      }
+
+      expect(handshakeSucceeded).toBe(false);
+
+      // The guarded transition matched nothing, so nothing was written.
+      expect(await statusOf(gateway.id)).toBe('DISABLED');
+      const row = await prisma.gateway.findUniqueOrThrow({ where: { id: gateway.id } });
+      expect(row.lastSeenAt).toBeNull();
+    });
   });
 
   describe('heartbeats', () => {
@@ -276,6 +333,26 @@ describeWithDb('gateway session lifecycle (integration)', () => {
 
       socket.close();
       await closed(socket);
+    });
+
+    /*
+     * The same race, arrived at from the other side. A gateway disabled while
+     * its session is open would, with an unguarded heartbeat, put itself back
+     * to ONLINE within the heartbeat interval -- undoing the change faster
+     * than anyone could see it had not taken.
+     */
+    it('closes the session and stays disabled when the gateway is disabled mid-session', async () => {
+      const { gateway, secret } = await claimedGateway('heartbeat-disabled');
+      const socket = connect(gateway.serialNumber, secret);
+      await opened(socket);
+      await eventually(async () => (await statusOf(gateway.id)) === 'ONLINE');
+
+      await prisma.gateway.update({ where: { id: gateway.id }, data: { status: 'DISABLED' } });
+      socket.send(JSON.stringify({ type: 'heartbeat' }));
+
+      await closed(socket);
+
+      expect(await statusOf(gateway.id)).toBe('DISABLED');
     });
 
     it('records the firmware version the gateway reports', async () => {
