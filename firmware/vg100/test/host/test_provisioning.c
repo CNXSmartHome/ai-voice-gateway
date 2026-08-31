@@ -5,8 +5,18 @@
 
 /* --- helpers ------------------------------------------------------------ */
 
+/** Boots with credentials that are both stored and proven, or with neither. */
 static vg_prov_outcome_t boot(vg_prov_ctx_t *ctx, bool has_credentials) {
-  vg_prov_event_t event = {.type = VG_PROV_EVENT_BOOT, .has_credentials = has_credentials};
+  vg_prov_event_t event = {.type = VG_PROV_EVENT_BOOT,
+                           .credentials_stored = has_credentials,
+                           .credentials_proven = has_credentials};
+  return vg_prov_handle(ctx, &event);
+}
+
+/** Boots with an arbitrary combination of what storage holds. */
+static vg_prov_outcome_t boot_with(vg_prov_ctx_t *ctx, bool stored, bool proven) {
+  vg_prov_event_t event = {
+      .type = VG_PROV_EVENT_BOOT, .credentials_stored = stored, .credentials_proven = proven};
   return vg_prov_handle(ctx, &event);
 }
 
@@ -64,6 +74,86 @@ static void provisioned_device_connects_without_advertising(void) {
   VG_CHECK_INT(outcome.actions, VG_PROV_ACTION_CONNECT_WIFI);
   VG_CHECK(ctx.has_credentials);
   VG_CHECK(!has_action(outcome, VG_PROV_ACTION_START_PROVISIONING));
+  VG_CHECK(!has_action(outcome, VG_PROV_ACTION_ERASE_CREDENTIALS));
+}
+
+/*
+ * The crash-safety case, and the reason the boot event carries two flags
+ * rather than one.
+ *
+ * ESP-IDF writes credentials to NVS the moment a phone sends them, before
+ * anything tries to use them. Power lost between "received" and "connected"
+ * therefore leaves a stored password -- possibly a typo -- that the Wi-Fi
+ * stack will happily report as "provisioned" on the next boot. Trusting that
+ * would send the device down the reconnect path forever, recoverable only by
+ * someone holding the reset button.
+ */
+static void credentials_that_never_connected_do_not_survive_a_reboot(void) {
+  vg_prov_ctx_t ctx;
+  vg_prov_init(&ctx);
+
+  vg_prov_outcome_t outcome = boot_with(&ctx, true, false);
+
+  VG_CHECK_INT(ctx.state, VG_PROV_STATE_PROVISIONING);
+  VG_CHECK(has_action(outcome, VG_PROV_ACTION_ERASE_CREDENTIALS));
+  VG_CHECK(has_action(outcome, VG_PROV_ACTION_START_PROVISIONING));
+  VG_CHECK(!has_action(outcome, VG_PROV_ACTION_CONNECT_WIFI));
+  /* No reboot: the device is already starting up. */
+  VG_CHECK(!has_action(outcome, VG_PROV_ACTION_REBOOT));
+  VG_CHECK(!ctx.has_credentials);
+}
+
+/* A marker with nothing to prove is equally unusable, and equally a leftover
+ * of an interrupted write. Neither half is trusted without the other. */
+static void a_proof_with_no_credentials_is_cleared_too(void) {
+  vg_prov_ctx_t ctx;
+  vg_prov_init(&ctx);
+
+  vg_prov_outcome_t outcome = boot_with(&ctx, false, true);
+
+  VG_CHECK_INT(ctx.state, VG_PROV_STATE_PROVISIONING);
+  VG_CHECK(has_action(outcome, VG_PROV_ACTION_ERASE_CREDENTIALS));
+  VG_CHECK(has_action(outcome, VG_PROV_ACTION_START_PROVISIONING));
+  VG_CHECK(!ctx.has_credentials);
+}
+
+/* Nothing stored means nothing to erase; a factory-fresh device should not
+ * write to flash before it has anything to write. */
+static void a_factory_fresh_boot_erases_nothing(void) {
+  vg_prov_ctx_t ctx;
+  vg_prov_init(&ctx);
+
+  vg_prov_outcome_t outcome = boot_with(&ctx, false, false);
+
+  VG_CHECK_INT(outcome.actions, VG_PROV_ACTION_START_PROVISIONING);
+}
+
+/*
+ * The full sequence the reviewer asked for: credentials arrive, power is lost
+ * before they connect, and the device comes back. It must advertise, not
+ * retry.
+ */
+static void a_power_loss_mid_provisioning_leaves_a_provisionable_device(void) {
+  vg_prov_ctx_t before_power_loss;
+  vg_prov_init(&before_power_loss);
+  boot(&before_power_loss, false);
+
+  /* The phone sends credentials. ESP-IDF has already written them to flash by
+   * the time this event arrives, so the marker is cleared here rather than
+   * after a failure that may never be reported. */
+  vg_prov_outcome_t received =
+      send(&before_power_loss, VG_PROV_EVENT_CREDENTIALS_RECEIVED);
+  VG_CHECK(has_action(received, VG_PROV_ACTION_MARK_UNPROVEN));
+
+  /* Power is lost here: no further events, no commit. Flash therefore holds
+   * credentials and no proof. */
+  vg_prov_ctx_t after_reboot;
+  vg_prov_init(&after_reboot);
+  vg_prov_outcome_t outcome = boot_with(&after_reboot, true, false);
+
+  VG_CHECK_INT(after_reboot.state, VG_PROV_STATE_PROVISIONING);
+  VG_CHECK(has_action(outcome, VG_PROV_ACTION_ERASE_CREDENTIALS));
+  VG_CHECK(has_action(outcome, VG_PROV_ACTION_START_PROVISIONING));
 }
 
 /* --- provisioning session ----------------------------------------------- */
@@ -78,8 +168,9 @@ static void received_credentials_leave_the_attempt_to_the_manager(void) {
   VG_CHECK_INT(ctx.state, VG_PROV_STATE_CONNECTING);
   VG_CHECK(ctx.in_provisioning_session);
   /* The provisioning manager already holds the credentials and is driving
-   * the attempt; a connect from here would race it. */
-  VG_CHECK_INT(outcome.actions, VG_PROV_ACTION_NONE);
+   * the attempt; a connect from here would race it. The only thing to do is
+   * record that what is now on flash has not been proven. */
+  VG_CHECK_INT(outcome.actions, VG_PROV_ACTION_MARK_UNPROVEN);
 }
 
 static void proven_credentials_are_committed(void) {
@@ -405,6 +496,10 @@ static void every_state_and_reason_has_a_log_name(void) {
 int main(void) {
   VG_RUN(factory_fresh_device_advertises);
   VG_RUN(provisioned_device_connects_without_advertising);
+  VG_RUN(credentials_that_never_connected_do_not_survive_a_reboot);
+  VG_RUN(a_proof_with_no_credentials_is_cleared_too);
+  VG_RUN(a_factory_fresh_boot_erases_nothing);
+  VG_RUN(a_power_loss_mid_provisioning_leaves_a_provisionable_device);
   VG_RUN(received_credentials_leave_the_attempt_to_the_manager);
   VG_RUN(proven_credentials_are_committed);
   VG_RUN(unproven_credentials_are_discarded);

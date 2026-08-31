@@ -112,14 +112,33 @@ vg_prov_outcome_t vg_prov_handle(vg_prov_ctx_t *ctx, const vg_prov_event_t *even
       if (event->type != VG_PROV_EVENT_BOOT) {
         break;
       }
-      ctx->has_credentials = event->has_credentials;
-      if (event->has_credentials) {
+
+      if (event->credentials_stored && event->credentials_proven) {
+        ctx->has_credentials = true;
         ctx->state = VG_PROV_STATE_CONNECTING;
         outcome.actions |= VG_PROV_ACTION_CONNECT_WIFI;
-      } else {
-        ctx->state = VG_PROV_STATE_PROVISIONING;
-        outcome.actions |= VG_PROV_ACTION_START_PROVISIONING;
+        break;
       }
+
+      /*
+       * Anything else is provisioning. The case that matters is credentials
+       * stored without proof: ESP-IDF persists what a phone sends before
+       * anything tries to use it, so a power loss between "received" and
+       * "connected" leaves a password that may well be a typo, indexed by a
+       * flag that says the device is provisioned. Booting into the reconnect
+       * path on that would strand the gateway retrying forever, reachable
+       * only by someone holding the reset button.
+       *
+       * Erasing rather than trusting costs a re-provisioning in the rare case
+       * where the credentials were in fact good. That is a minute with a
+       * phone, against a device nobody can recover without physical access.
+       */
+      ctx->has_credentials = false;
+      ctx->state = VG_PROV_STATE_PROVISIONING;
+      if (event->credentials_stored || event->credentials_proven) {
+        outcome.actions |= VG_PROV_ACTION_ERASE_CREDENTIALS;
+      }
+      outcome.actions |= VG_PROV_ACTION_START_PROVISIONING;
       break;
 
     case VG_PROV_STATE_PROVISIONING:
@@ -128,7 +147,13 @@ vg_prov_outcome_t vg_prov_handle(vg_prov_ctx_t *ctx, const vg_prov_event_t *even
       }
       /* No CONNECT_WIFI here: the provisioning manager already has the
        * credentials and drives the attempt itself, including its own bounded
-       * retries. Issuing a connect from here would race it. */
+       * retries. Issuing a connect from here would race it.
+       *
+       * The marker is cleared before the attempt, not after it fails. By the
+       * time this event arrives the credentials are already on flash, so the
+       * only ordering that survives a power loss is to record "unproven"
+       * first. */
+      outcome.actions |= VG_PROV_ACTION_MARK_UNPROVEN;
       ctx->state = VG_PROV_STATE_CONNECTING;
       ctx->in_provisioning_session = true;
       break;

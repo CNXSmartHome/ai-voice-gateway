@@ -12,6 +12,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "vg_identity.h"
+#include "vg_proof.h"
 #include "vg_provisioning.h"
 #include "wifi_provisioning/manager.h"
 #include "wifi_provisioning/scheme_ble.h"
@@ -146,6 +147,12 @@ static void discard_credentials(void) {
 }
 
 static void erase_credentials(void) {
+  /* The marker goes first. If power is lost between the two, the device comes
+   * back with credentials and no proof, which the state machine already
+   * treats as unusable -- whereas the other order would leave a proof
+   * standing for credentials that no longer exist. */
+  vg_proof_clear();
+
   /* esp_wifi_restore rather than the provisioning manager's reset, because
    * this also runs long after provisioning has been torn down. */
   esp_err_t err = esp_wifi_restore();
@@ -171,10 +178,23 @@ static void apply(vg_prov_outcome_t outcome) {
     /* VG-006 seam: the cloud session client is torn down here. */
     ESP_LOGI(TAG, "network down");
   }
+  if (outcome.actions & VG_PROV_ACTION_MARK_UNPROVEN) {
+    /* Credentials are already on flash by the time this runs -- ESP-IDF wrote
+     * them on receipt -- so this is what stops a power loss in the next few
+     * seconds from leaving them indistinguishable from working ones. */
+    vg_proof_clear();
+  }
   if (outcome.actions & VG_PROV_ACTION_COMMIT_CREDENTIALS) {
-    /* The manager has already persisted them; this is the point at which
-     * they are considered proven rather than merely stored. */
-    ESP_LOGI(TAG, "credentials accepted");
+    /* The write that makes the difference across a reboot. ESP-IDF stored the
+     * credentials when they arrived; this records that they then produced an
+     * address, which is the only durable evidence they work. */
+    if (vg_proof_set() == ESP_OK) {
+      ESP_LOGI(TAG, "credentials accepted");
+    } else {
+      /* The device is connected and useful right now, and will come back
+       * unprovisioned rather than stuck. Failing loudly beats pretending. */
+      ESP_LOGE(TAG, "connected, but could not record the credentials as proven");
+    }
   }
   if (outcome.actions & VG_PROV_ACTION_STOP_PROVISIONING) {
     stop_provisioning();
@@ -385,9 +405,25 @@ esp_err_t vg_net_start(const vg_factory_identity_t *identity) {
   ESP_ERROR_CHECK(wifi_prov_mgr_init(manager_config));
   s_manager_ready = true;
 
-  bool provisioned = false;
-  ESP_ERROR_CHECK(wifi_prov_mgr_is_provisioned(&provisioned));
-  if (provisioned) {
+  /*
+   * Two questions, not one. `wifi_prov_mgr_is_provisioned` reports whether
+   * credentials are on flash, which ESP-IDF writes the moment a phone sends
+   * them; `vg_proof_read` reports whether they were ever shown to work. Only
+   * the pair means provisioned, and the state machine decides what to do with
+   * anything else.
+   */
+  bool stored = false;
+  ESP_ERROR_CHECK(wifi_prov_mgr_is_provisioned(&stored));
+
+  bool proven = false;
+  if (vg_proof_read(&proven) != ESP_OK) {
+    /* Unreadable is treated as unproven: re-provisioning costs a minute with
+     * a phone, and the alternative is a device retrying credentials nobody
+     * has established work. */
+    proven = false;
+  }
+
+  if (stored && proven) {
     /* Nothing to provision, so the BLE stack is handed back immediately
      * rather than left listening for the life of the device. */
     wifi_prov_mgr_deinit();
@@ -395,9 +431,11 @@ esp_err_t vg_net_start(const vg_factory_identity_t *identity) {
   }
 
   ESP_LOGI(TAG, "serial %s, firmware %s, credentials %s", s_identity.serial_number,
-           firmware_version(), provisioned ? "stored" : "absent");
+           firmware_version(),
+           stored ? (proven ? "stored and proven" : "stored but never connected") : "absent");
 
-  vg_prov_event_t event = {.type = VG_PROV_EVENT_BOOT, .has_credentials = provisioned};
+  vg_prov_event_t event = {
+      .type = VG_PROV_EVENT_BOOT, .credentials_stored = stored, .credentials_proven = proven};
   feed(&event);
   return ESP_OK;
 }

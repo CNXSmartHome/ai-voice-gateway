@@ -1,5 +1,5 @@
 idf_component_register(
-  SRCS "main.c" "vg_factory.c" "vg_net.c"
+  SRCS "main.c" "vg_factory.c" "vg_net.c" "vg_proof.c"
   INCLUDE_DIRS "."
   REQUIRES
     vg_core

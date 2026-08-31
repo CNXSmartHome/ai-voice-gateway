@@ -62,7 +62,7 @@ typedef enum {
 } vg_prov_state_t;
 
 typedef enum {
-  /** Boot-time report of whether credentials are already stored. */
+  /** Boot-time report of what is in storage. See `vg_prov_event_t`. */
   VG_PROV_EVENT_BOOT = 0,
   /** A phone delivered credentials over the provisioning session. */
   VG_PROV_EVENT_CREDENTIALS_RECEIVED,
@@ -87,8 +87,28 @@ typedef enum {
 
 typedef struct {
   vg_prov_event_type_t type;
-  /** VG_PROV_EVENT_BOOT: whether stored credentials exist. */
-  bool has_credentials;
+
+  /**
+   * VG_PROV_EVENT_BOOT: whether the Wi-Fi stack holds stored credentials.
+   *
+   * True does not mean they ever worked. The ESP-IDF provisioning manager
+   * writes credentials to NVS the moment a phone sends them, before any
+   * attempt to use them, so this is true for a password that was mistyped
+   * thirty seconds before someone pulled the plug.
+   */
+  bool credentials_stored;
+
+  /**
+   * VG_PROV_EVENT_BOOT: whether the application recorded that stored
+   * credentials once produced a connection.
+   *
+   * This is the flag that survives a power loss and says something useful.
+   * Written only after an address is held, cleared whenever credentials are
+   * replaced or erased. Stored credentials without it are the wreckage of an
+   * interrupted provisioning session, not a provisioned device.
+   */
+  bool credentials_proven;
+
   /** VG_PROV_EVENT_WIFI_FAILED: why. Ignored for other events. */
   vg_prov_fail_reason_t reason;
 } vg_prov_event_t;
@@ -107,14 +127,34 @@ typedef enum {
   VG_PROV_ACTION_CONNECT_WIFI = 1u << 2,
   /** Arm a one-shot timer for `retry_delay_ms`. */
   VG_PROV_ACTION_ARM_RETRY_TIMER = 1u << 3,
-  /** The credentials just proved themselves; they may be kept. */
+  /**
+   * The credentials just produced a connection: record that they are proven,
+   * durably, so a reboot can tell them apart from ones that never worked.
+   *
+   * This is a write, not a note to self. Without it the only persisted signal
+   * is the one ESP-IDF writes on receipt, which cannot distinguish a working
+   * password from a typo.
+   */
   VG_PROV_ACTION_COMMIT_CREDENTIALS = 1u << 4,
+  /**
+   * Credentials are about to be replaced: clear the proven marker first.
+   *
+   * Ordering is the whole point. If power is lost between a phone sending
+   * credentials and those credentials connecting, the device must come back
+   * unprovisioned rather than inheriting the previous pair's proof.
+   */
+  VG_PROV_ACTION_MARK_UNPROVEN = 1u << 10,
   /**
    * Throw away credentials that never worked and let the phone try again.
    * Distinct from erasing: nothing that ever worked is being discarded.
    */
   VG_PROV_ACTION_DISCARD_CREDENTIALS = 1u << 5,
-  /** Erase stored credentials. Paired with a reboot. */
+  /**
+   * Erase stored credentials and the proven marker with them.
+   *
+   * Paired with a reboot when it happens during operation. At boot it stands
+   * alone: the device is already about to start provisioning.
+   */
   VG_PROV_ACTION_ERASE_CREDENTIALS = 1u << 6,
   /**
    * Restart the device.

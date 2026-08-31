@@ -15,10 +15,12 @@ device end of that exchange:
 1. Read the serial number and the proof of possession from the read-only
    factory partition. If either is missing or malformed, stop — do not
    advertise, do not fall back to an unauthenticated session.
-2. With no stored credentials, advertise as `VG100-XXXXX` and accept a
-   provisioning session protected by the proof of possession.
-3. With stored credentials, connect, and keep reconnecting for as long as it
-   takes.
+2. With no credentials that are known to work, advertise as `VG100-XXXXX` and
+   accept a provisioning session protected by the proof of possession.
+3. With credentials that have connected before, connect, and keep
+   reconnecting for as long as it takes.
+
+"Known to work" is doing real work in step 2 — see below.
 
 Everything after "connected" — the cloud session (VG-006), audio (VG-018),
 OTA (VG-030) — is a later task. `vg_net.c` marks the two places the session
@@ -32,7 +34,7 @@ partitions.csv              Fixed layout, including the reserved OTA slots
 sdkconfig.defaults          Target, flash size, NimBLE
 factory_nvs.csv.example     Template for the per-device factory partition
 components/vg_core/         Pure C: provisioning policy and identity rules
-main/                       ESP-IDF glue: NVS, Wi-Fi, BLE provisioning, reset control
+main/                       ESP-IDF glue: NVS, Wi-Fi, BLE provisioning, proof marker, reset
 test/host/                  Host build of components/vg_core, run by CI
 ```
 
@@ -56,17 +58,43 @@ is the shipped code.
 | No stored credentials | Advertise over BLE and wait |
 | Credentials that connect | Keep them, close the BLE service |
 | Credentials that fail | Discard them, tell the phone, keep advertising |
+| Power lost before they connect | Erase on the next boot and advertise |
 | Working network drops | Reconnect: 1s, 2s, 4s … capped at 60s, indefinitely |
 | Five authentication failures in a row | Erase and reboot into provisioning |
 | Reset control held | Erase and reboot into provisioning |
 
-Two of these are worth their own sentence.
+Three of these are worth their own sentence.
 
 **Credentials are not kept until they work.** A mistyped password that got
 stored would leave the device provisioned as far as the firmware is
 concerned, retrying something that can never succeed, recoverable only with
 the reset button. Discarding it instead means the phone can simply send the
 right one.
+
+**And "not kept" has to survive losing power**, which takes a second flag.
+ESP-IDF writes credentials to NVS the moment a phone sends them — before
+anything tries to use them — and `wifi_prov_mgr_is_provisioned()` reports
+that as provisioned. So the Wi-Fi stack alone cannot tell a working password
+from one mistyped five seconds before someone pulled the plug.
+
+`vg_proof` is the missing half: a marker the application owns, written only
+once an address is actually held, cleared before credentials are replaced and
+whenever they are erased. At boot the device asks both questions, and only
+the pair counts:
+
+| On flash | Marker | Boot behaviour |
+| --- | --- | --- |
+| Credentials | Set | Connect |
+| Credentials | Absent | **Erase and advertise** |
+| Nothing | Absent | Advertise |
+| Nothing | Set | Erase and advertise |
+
+The third row is the one that matters. Erasing costs a re-provisioning in the
+rare case where the interrupted credentials were in fact good — a minute with
+a phone — against a gateway that nobody can recover without physical access.
+The ordering is deliberate everywhere: the marker is cleared *before* the
+credentials it describes change, so an interruption always lands on
+"unproven" rather than on a proof that outlives what it proved.
 
 **A changed router password is recoverable from the app.** Five consecutive
 authentication failures — not a router that is switched off, which reports
@@ -103,7 +131,7 @@ behind Product Owner approval; both belong with VG-028.
 ## Partition table
 
 ```
-nvs          data nvs   0x9000   0x6000    Wi-Fi credentials; erased by a factory reset
+nvs          data nvs   0x9000   0x6000    Wi-Fi credentials and the proof marker
 otadata      data ota   0xf000   0x2000
 phy_init     data phy   0x11000  0x1000
 vg_factory   data nvs   0x12000  0x4000    Serial number and proof of possession
