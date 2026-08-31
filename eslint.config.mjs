@@ -10,17 +10,20 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/coverage/**',
       'firmware/**',
-      'apps/mobile/**',
+      'apps/mobile/.expo/**',
+      'apps/mobile/android/**',
+      'apps/mobile/ios/**',
     ],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ['**/*.ts'],
+    files: ['**/*.ts', '**/*.tsx'],
     languageOptions: {
       parserOptions: {
         ecmaVersion: 2022,
         sourceType: 'module',
+        ecmaFeatures: { jsx: true },
       },
     },
     rules: {
@@ -63,6 +66,22 @@ export default tseslint.config(
     files: ['**/scripts/**/*.js'],
     rules: {
       'no-console': 'off',
+    },
+  },
+  {
+    // The mobile app runs in React Native, not Node. Its globals are the
+    // browser-shaped ones the runtime provides.
+    files: ['apps/mobile/**/*.ts', 'apps/mobile/**/*.tsx'],
+    languageOptions: {
+      globals: {
+        console: 'readonly',
+        fetch: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        AbortController: 'readonly',
+        URL: 'readonly',
+        process: 'readonly',
+      },
     },
   },
   prettier,
