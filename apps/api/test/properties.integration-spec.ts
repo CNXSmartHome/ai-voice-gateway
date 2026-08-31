@@ -136,18 +136,17 @@ describeWithDb('properties (integration)', () => {
       const response = await post(owner.token, {
         organizationId: owner.organizationId,
         name: 'Villa One',
-        timezone: 'Asia/Bangkok',
       }).expect(201);
 
       expect(response.body).toMatchObject({
         organizationId: owner.organizationId,
         name: 'Villa One',
-        timezone: 'Asia/Bangkok',
       });
       expect((response.body as { id: string }).id).toEqual(expect.any(String));
     });
 
-    it('defaults the timezone to UTC', async () => {
+    it('reports the timezone the schema defaulted it to', async () => {
+      // Read-only here: setting it is not part of this task.
       const owner = await signUp('default-tz');
 
       const response = await post(owner.token, {
@@ -156,16 +155,6 @@ describeWithDb('properties (integration)', () => {
       }).expect(201);
 
       expect((response.body as { timezone: string }).timezone).toBe('UTC');
-    });
-
-    it('rejects a timezone the runtime does not know', async () => {
-      const owner = await signUp('bad-tz');
-
-      await post(owner.token, {
-        organizationId: owner.organizationId,
-        name: 'Villa Bad',
-        timezone: 'GMT+7',
-      }).expect(400);
     });
 
     it('rejects an unknown field rather than ignoring it', async () => {
@@ -320,21 +309,7 @@ describeWithDb('properties (integration)', () => {
       ).resolves.toBe('After');
     });
 
-    it('changes the timezone', async () => {
-      const owner = await signUp('retz');
-      const created = await post(owner.token, {
-        organizationId: owner.organizationId,
-        name: 'Zoned',
-      }).expect(201);
-
-      const response = await patch(owner.token, (created.body as { id: string }).id, {
-        timezone: 'Asia/Bangkok',
-      }).expect(200);
-
-      expect((response.body as { timezone: string }).timezone).toBe('Asia/Bangkok');
-    });
-
-    it('refuses a change that changes nothing', async () => {
+    it('refuses a body with no name', async () => {
       const owner = await signUp('empty-patch');
       const created = await post(owner.token, {
         organizationId: owner.organizationId,
@@ -372,6 +347,50 @@ describeWithDb('properties (integration)', () => {
       await patch(outsider.token, (created.body as { id: string }).id, {
         name: 'Mine now',
       }).expect(404);
+    });
+
+    /*
+     * Authorization is decided from a row read before the write, and a
+     * property can be moved to another organization in between. Without the
+     * organization carried into the write predicate, a request authorized
+     * against one organization would modify a property belonging to another.
+     *
+     * The window is opened deliberately rather than raced for: the write
+     * happens inside the service transaction, so moving the property
+     * immediately before that transaction runs places the change exactly
+     * where a real one would have to land.
+     */
+    it('cannot rename a property whose organization changed after authorization', async () => {
+      const owner = await signUp('race-owner');
+      const other = await signUp('race-other');
+      const created = await post(owner.token, {
+        organizationId: owner.organizationId,
+        name: 'Before the race',
+      }).expect(201);
+      const id = (created.body as { id: string }).id;
+
+      const runTransaction = prisma.$transaction.bind(prisma) as (argument: unknown) => unknown;
+      const intercept = jest
+        .spyOn(prisma, '$transaction')
+        .mockImplementation(async (argument: unknown) => {
+          intercept.mockRestore();
+          await prisma.property.update({
+            where: { id },
+            data: { organizationId: other.organizationId },
+          });
+          return runTransaction(argument);
+        }) as unknown as jest.SpyInstance;
+
+      try {
+        // The same answer as a property they cannot see, which by now it is.
+        await patch(owner.token, id, { name: 'Renamed anyway' }).expect(404);
+      } finally {
+        intercept.mockRestore();
+      }
+
+      const row = await prisma.property.findUniqueOrThrow({ where: { id } });
+      expect(row.name).toBe('Before the race');
+      expect(row.organizationId).toBe(other.organizationId);
     });
 
     it('answers a MEMBER of the organization with a 403', async () => {
@@ -412,7 +431,6 @@ describeWithDb('properties (integration)', () => {
       const property = await post(owner.token, {
         organizationId: owner.organizationId,
         name: 'Day 7 villa',
-        timezone: 'Asia/Bangkok',
       }).expect(201);
       const propertyId = (property.body as { id: string }).id;
 

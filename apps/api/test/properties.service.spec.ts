@@ -1,14 +1,8 @@
-import {
-  BadRequestException,
-  ConflictException,
-  ForbiddenException,
-  NotFoundException,
-} from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../src/auth/authenticated-user';
 import type { PrismaService } from '../src/database/prisma.service';
 import { CLAIM_ROLES } from '../src/gateways/gateways.service';
-import { isValidTimezone } from '../src/properties/dto/is-timezone.validator';
 import { PropertiesService, PROPERTY_WRITE_ROLES } from '../src/properties/properties.service';
 
 const ORGANIZATION = 'org_1';
@@ -66,37 +60,33 @@ describe('PROPERTY_WRITE_ROLES', () => {
   });
 });
 
-describe('isValidTimezone', () => {
-  it('accepts IANA zones', () => {
-    expect(isValidTimezone('Asia/Bangkok')).toBe(true);
-    expect(isValidTimezone('UTC')).toBe(true);
-    expect(isValidTimezone('America/New_York')).toBe(true);
-  });
-
-  it('rejects anything the runtime does not know', () => {
-    expect(isValidTimezone('Mars/Olympus')).toBe(false);
-    expect(isValidTimezone('GMT+7')).toBe(false);
-    expect(isValidTimezone('')).toBe(false);
-    expect(isValidTimezone(7)).toBe(false);
-    expect(isValidTimezone(null)).toBe(false);
-  });
-});
-
 describe('PropertiesService', () => {
   let create: jest.Mock;
   let findUnique: jest.Mock;
   let findMany: jest.Mock;
-  let update: jest.Mock;
+  let updateMany: jest.Mock;
+  let findUniqueOrThrow: jest.Mock;
+  let transaction: jest.Mock;
   let service: PropertiesService;
 
   beforeEach(() => {
     create = jest.fn().mockResolvedValue(PROPERTY_ROW);
     findUnique = jest.fn().mockResolvedValue(PROPERTY_ROW);
     findMany = jest.fn().mockResolvedValue([PROPERTY_ROW]);
-    update = jest.fn().mockResolvedValue(PROPERTY_ROW);
+    updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    findUniqueOrThrow = jest.fn().mockResolvedValue(PROPERTY_ROW);
+
+    // Runs the callback, so the guarded write inside the transaction is
+    // exercised rather than stubbed past.
+    transaction = jest
+      .fn()
+      .mockImplementation((run: (tx: unknown) => unknown) =>
+        run({ property: { updateMany, findUniqueOrThrow } }),
+      );
 
     service = new PropertiesService({
-      property: { create, findUnique, findMany, update },
+      property: { create, findUnique, findMany },
+      $transaction: transaction,
     } as unknown as PrismaService);
   });
 
@@ -122,20 +112,15 @@ describe('PropertiesService', () => {
       });
     });
 
-    it('leaves the timezone to the schema default when none is given', async () => {
+    it('writes only the organization and the name', async () => {
+      // The timezone column exists and is left to its schema default: setting
+      // it is not part of this task.
       await service.create(caller('ADMIN'), { organizationId: ORGANIZATION, name: 'Villa' });
 
-      expect(create.mock.calls[0]?.[0]?.data).not.toHaveProperty('timezone');
-    });
-
-    it('passes a supplied timezone through', async () => {
-      await service.create(caller('OWNER'), {
+      expect(create.mock.calls[0]?.[0]?.data).toEqual({
         organizationId: ORGANIZATION,
         name: 'Villa',
-        timezone: 'Asia/Bangkok',
       });
-
-      expect(create.mock.calls[0]?.[0]?.data?.timezone).toBe('Asia/Bangkok');
     });
 
     /*
@@ -250,50 +235,69 @@ describe('PropertiesService', () => {
 
   describe('update', () => {
     it('renames a property', async () => {
+      const view = await service.update(caller('OWNER'), 'prop_1', { name: 'Villa Two' });
+
+      expect(updateMany.mock.calls[0]?.[0]?.data).toEqual({ name: 'Villa Two' });
+      expect(view).toMatchObject({ id: 'prop_1' });
+    });
+
+    /*
+     * Authorization is decided from a row read a moment earlier, and a
+     * property can be moved to another organization in between. Carrying the
+     * authorized organization into the write means a property the caller was
+     * never authorized for cannot be modified by a request that was.
+     */
+    it('carries the organization it authorized against into the write', async () => {
       await service.update(caller('OWNER'), 'prop_1', { name: 'Villa Two' });
 
-      expect(update).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: 'prop_1' }, data: { name: 'Villa Two' } }),
-      );
+      expect(updateMany.mock.calls[0]?.[0]?.where).toEqual({
+        id: 'prop_1',
+        organizationId: ORGANIZATION,
+      });
     });
 
-    it('changes only what was asked for', async () => {
-      await service.update(caller('OWNER'), 'prop_1', { timezone: 'UTC' });
+    it('refuses when the guarded write matches nothing, as if the property were gone', async () => {
+      updateMany.mockResolvedValue({ count: 0 });
 
-      expect(update.mock.calls[0]?.[0]?.data).toEqual({ timezone: 'UTC' });
+      await expect(
+        service.update(caller('OWNER'), 'prop_1', { name: 'Villa Two' }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(findUniqueOrThrow).not.toHaveBeenCalled();
     });
 
-    it('refuses a change that changes nothing', async () => {
-      // Reporting success for having done nothing is worse than a 400: it
-      // reads as "renamed" to a client that sent the wrong field name.
-      await expect(service.update(caller('OWNER'), 'prop_1', {})).rejects.toBeInstanceOf(
-        BadRequestException,
+    it('returns the row read back inside the transaction, not the one it authorized from', async () => {
+      // The update holds a lock on the row until commit, so this read is the
+      // authoritative result rather than a second guess at it.
+      await service.update(caller('OWNER'), 'prop_1', { name: 'Villa Two' });
+
+      expect(transaction).toHaveBeenCalledTimes(1);
+      expect(findUniqueOrThrow).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'prop_1' } }),
       );
-      expect(findUnique).not.toHaveBeenCalled();
     });
 
     it('never moves a property between organizations', async () => {
-      await service.update(caller('OWNER'), 'prop_1', { name: 'Villa Two', timezone: 'UTC' });
+      await service.update(caller('OWNER'), 'prop_1', { name: 'Villa Two' });
 
-      expect(update.mock.calls[0]?.[0]?.data).not.toHaveProperty('organizationId');
+      expect(updateMany.mock.calls[0]?.[0]?.data).not.toHaveProperty('organizationId');
     });
 
     it('answers a property the caller cannot see with a 404', async () => {
       await expect(
         service.update(caller('OWNER', OTHER_ORGANIZATION), 'prop_1', { name: 'Mine now' }),
       ).rejects.toBeInstanceOf(NotFoundException);
-      expect(update).not.toHaveBeenCalled();
+      expect(updateMany).not.toHaveBeenCalled();
     });
 
     it('answers a property the caller can read but not administer with a 403', async () => {
       await expect(
         service.update(caller('MEMBER'), 'prop_1', { name: 'Villa Two' }),
       ).rejects.toBeInstanceOf(ForbiddenException);
-      expect(update).not.toHaveBeenCalled();
+      expect(updateMany).not.toHaveBeenCalled();
     });
 
     it('reports a duplicate name plainly', async () => {
-      update.mockRejectedValue(prismaError('P2002'));
+      updateMany.mockRejectedValue(prismaError('P2002'));
 
       await expect(
         service.update(caller('OWNER'), 'prop_1', { name: 'Villa One' }),
@@ -301,7 +305,7 @@ describe('PropertiesService', () => {
     });
 
     it('treats a property deleted between the read and the write as missing', async () => {
-      update.mockRejectedValue(prismaError('P2025'));
+      updateMany.mockRejectedValue(prismaError('P2025'));
 
       await expect(
         service.update(caller('OWNER'), 'prop_1', { name: 'Villa Two' }),

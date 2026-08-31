@@ -3,5 +3,4 @@ export type { CreatePropertyInput, UpdatePropertyInput } from './properties.serv
 export { PropertiesModule } from './properties.module';
 export { CreatePropertyDto } from './dto/create-property.dto';
 export { UpdatePropertyDto } from './dto/update-property.dto';
-export { isValidTimezone } from './dto/is-timezone.validator';
 export { PROPERTY_SELECT, toPropertyView, type PropertyView } from './property.view';

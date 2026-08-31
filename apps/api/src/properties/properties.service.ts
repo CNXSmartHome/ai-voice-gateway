@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -25,12 +24,10 @@ export const PROPERTY_WRITE_ROLES: readonly string[] = ['OWNER', 'ADMIN'];
 export interface CreatePropertyInput {
   readonly organizationId: string;
   readonly name: string;
-  readonly timezone?: string;
 }
 
 export interface UpdatePropertyInput {
-  readonly name?: string;
-  readonly timezone?: string;
+  readonly name: string;
 }
 
 @Injectable()
@@ -51,11 +48,7 @@ export class PropertiesService {
 
     try {
       const property = await this.prisma.property.create({
-        data: {
-          organizationId: input.organizationId,
-          name: input.name,
-          ...(input.timezone === undefined ? {} : { timezone: input.timezone }),
-        },
+        data: { organizationId: input.organizationId, name: input.name },
         select: PROPERTY_SELECT,
       });
       return toPropertyView(property);
@@ -110,7 +103,7 @@ export class PropertiesService {
   }
 
   /**
-   * Renames a property, or moves it to another time zone.
+   * Renames a property.
    *
    * The two failure codes are different on purpose. A property in an
    * organization the caller does not belong to is a `404` — they have no way
@@ -127,10 +120,6 @@ export class PropertiesService {
     propertyId: string,
     input: UpdatePropertyInput,
   ): Promise<PropertyView> {
-    if (input.name === undefined && input.timezone === undefined) {
-      throw new BadRequestException('Provide a name or a timezone to change.');
-    }
-
     const existing = await this.prisma.property.findUnique({
       where: { id: propertyId },
       select: { organizationId: true },
@@ -141,16 +130,33 @@ export class PropertiesService {
     }
     this.assertMayAdminister(caller, existing.organizationId);
 
+    // The organization this caller was authorized against, carried into the
+    // write. Authorization was decided from a row read a moment ago, and a
+    // property could be moved to another organization in between; without
+    // this the write would apply to a property the caller was never
+    // authorized for. Refusing looks exactly like a property they cannot see,
+    // which by then is what it is.
+    const authorizedOrganizationId = existing.organizationId;
+
     try {
-      const property = await this.prisma.property.update({
-        where: { id: propertyId },
-        data: {
-          ...(input.name === undefined ? {} : { name: input.name }),
-          ...(input.timezone === undefined ? {} : { timezone: input.timezone }),
-        },
-        select: PROPERTY_SELECT,
+      return await this.prisma.$transaction(async (tx) => {
+        const renamed = await tx.property.updateMany({
+          where: { id: propertyId, organizationId: authorizedOrganizationId },
+          data: { name: input.name },
+        });
+
+        if (renamed.count !== 1) throw propertyNotFound();
+
+        // Read back inside the transaction, after the write. The row is
+        // locked by the update until commit, so this is the authoritative
+        // result rather than a second guess at it.
+        const property = await tx.property.findUniqueOrThrow({
+          where: { id: propertyId },
+          select: PROPERTY_SELECT,
+        });
+
+        return toPropertyView(property);
       });
-      return toPropertyView(property);
     } catch (error) {
       if (isUniqueViolation(error)) {
         throw new ConflictException('A property with that name already exists.');

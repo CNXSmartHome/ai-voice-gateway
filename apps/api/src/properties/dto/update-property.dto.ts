@@ -1,24 +1,15 @@
-import { IsOptional, IsString, Length } from 'class-validator';
-
-import { IsTimezone } from './is-timezone.validator';
+import { IsString, Length } from 'class-validator';
 
 /**
- * Both fields optional, but not both absent — the service rejects an empty
- * change rather than reporting success for having done nothing.
+ * Rename, and only rename.
  *
- * `organizationId` is deliberately absent. Moving a property between
- * organizations would move its rooms, gateways, and devices with it, across
- * an authorization boundary, and that is not a rename.
+ * `organizationId` is deliberately absent, and the validation pipe rejects it
+ * as an unknown field. Moving a property between organizations would carry
+ * its rooms, gateways, and devices across an authorization boundary, and that
+ * is not a rename.
  */
 export class UpdatePropertyDto {
-  @IsOptional()
   @IsString()
   @Length(1, 200)
-  name?: string;
-
-  @IsOptional()
-  @IsString()
-  @Length(1, 64)
-  @IsTimezone()
-  timezone?: string;
+  name!: string;
 }

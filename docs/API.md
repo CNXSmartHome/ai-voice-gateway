@@ -67,17 +67,12 @@ hardware to.
 POST /v1/properties
 {
   "organizationId": "org_1",
-  "name": "Villa One",
-  "timezone": "Asia/Bangkok"
+  "name": "Villa One"
 }
 ```
 
 `organizationId` is required: a caller can be a member of more than one
-organization, and the API does not guess. `timezone` is an IANA zone,
-validated against the runtime's own database and defaulting to `UTC`. It is
-settable here because a property is a physical place and everything
-time-shaped that follows — schedules, an evening scene, "goodnight" — is
-wrong without it.
+organization, and the API does not guess.
 
 Returns `201`:
 
@@ -86,22 +81,28 @@ Returns `201`:
   "id": "prop_1",
   "organizationId": "org_1",
   "name": "Villa One",
-  "timezone": "Asia/Bangkok",
+  "timezone": "UTC",
   "createdAt": "2026-08-31T00:00:00.000Z",
   "updatedAt": "2026-08-31T00:00:00.000Z"
 }
 ```
 
+`timezone` is reported but not settable. The column has existed since VG-003
+and defaults to `UTC`; giving it an owner is its own task, because everything
+time-shaped that will depend on it — schedules, an evening scene — arrives
+later.
+
 `GET /v1/properties` returns the properties of every organization the caller
 belongs to, scoped from their memberships rather than from any parameter.
-`PATCH` accepts `name`, `timezone`, or both, and refuses a body containing
-neither. It does not accept `organizationId`: moving a property would carry
-its rooms, gateways, and devices across an authorization boundary, and that
-is not a rename.
+
+`PATCH` renames, and only renames. It does not accept `organizationId`, and
+the validation pipe rejects it as an unknown field: moving a property would
+carry its rooms, gateways, and devices across an authorization boundary, and
+that is not a rename.
 
 **Failure semantics.** `400` for a malformed body, an unknown field, or a
-`PATCH` that changes nothing. `401` for an unauthenticated caller. `409` for
-a name already used in the same organization — the caller can list their own
+`PATCH` with no `name`. `401` for an unauthenticated caller. `409` for a name
+already used in the same organization — the caller can list their own
 properties, so there is nothing to hide and "that name is taken" is what they
 need to know.
 
@@ -124,6 +125,11 @@ This is a finer distinction than `POST /v1/gateways/claim` draws, which
 answers every rejection identically. That endpoint's caller has no read
 access to properties at all, so it cannot make the distinction without
 leaking; here the caller's read access already settles it.
+
+A `PATCH` is authorized against the property's organization and then carries
+that organization into the write itself, so a property moved to another
+organization in between is refused with the same `404` rather than modified
+under an authorization that no longer applies.
 
 ## Gateway
 - POST `/v1/gateways/claim` — implemented (VG-005)
