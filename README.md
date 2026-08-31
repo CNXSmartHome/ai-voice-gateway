@@ -25,7 +25,7 @@ manual is [`CLAUDE.md`](CLAUDE.md).
 ```
 apps/
   api/            NestJS cloud API service
-  mobile/         React Native app          (reserved - VG-008)
+  mobile/         Expo (React Native) app
 packages/
   domain/         Universal device model shared across services
 tools/
@@ -38,8 +38,8 @@ docs/             Product, architecture, API, and device model specs
 .github/          Issue templates, PR template, CI workflows
 ```
 
-`apps/mobile` and `firmware/vg100` are placeholders reserved for their tasks.
-They are deliberately outside the npm workspace until initialized.
+`firmware/vg100` is a placeholder reserved for VG-007 and stays outside the
+npm workspace: ESP-IDF builds with CMake and its own toolchain.
 
 ## Requirements
 
@@ -109,6 +109,26 @@ Storage enums are SCREAMING_SNAKE_CASE; the domain uses the canonical
 lowercase names. `apps/api/src/database/domain-mapping.ts` is the only place
 that knows both, and tests assert the two never drift.
 
+## Mobile app
+
+[`apps/mobile`](apps/mobile) is an Expo app — see
+[`docs/adr/0002-mobile-framework.md`](docs/adr/0002-mobile-framework.md) for
+that decision. It is in the npm workspace, so the root `lint`, `typecheck`,
+and `test:unit` commands already cover it.
+
+```bash
+npm run android --workspace @vg/mobile        # or `ios`, which needs macOS
+```
+
+Set `EXPO_PUBLIC_API_URL` first; it is the only thing the app is configured
+with, and it is compiled into the bundle, so nothing secret belongs there.
+**Expo Go will not run this app** — the add-gateway flow needs a native BLE
+module, so `npm run android` builds and installs a development build.
+
+`npm run build` does not cover the app: Metro bundles it rather than `tsc`.
+CI runs `npm run bundle --workspace @vg/mobile` instead, which catches an
+import that typechecks but cannot resolve at runtime.
+
 ## Checks
 
 The same commands run locally and in CI (`.github/workflows/quality-gate.yml`):
@@ -122,6 +142,7 @@ The same commands run locally and in CI (`.github/workflows/quality-gate.yml`):
 | `npm run test:integration` | Integration tests |
 | `npm test` | All tests |
 | `npm run build` | Compile all workspaces |
+| `npm run bundle --workspace @vg/mobile` | Bundle the mobile app with Metro |
 
 Run everything before opening a pull request.
 
