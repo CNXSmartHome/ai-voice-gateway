@@ -1,0 +1,18 @@
+# Defaults for the VG-100 build. `sdkconfig` itself is generated and
+# git-ignored; this file is the part that gets reviewed.
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# 8 MB, matching the partition table.
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# NimBLE rather than Bluedroid: provisioning needs BLE only, and NimBLE is
+# the smaller of the two by enough to matter on a device that also has to
+# hold a Wi-Fi stack and, from VG-018, an audio pipeline.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_BLUEDROID_ENABLED=n
+
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y

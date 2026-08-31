@@ -5,6 +5,8 @@
       "Repository policy",
       "Lint, typecheck, test, build",
       "Dependency audit",
+      "Firmware host tests",
+      "Firmware build",
       "Title and label policy",
       "CodeQL"
     ]

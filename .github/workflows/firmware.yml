@@ -1,0 +1,62 @@
+name: Firmware
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firmware-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IDF_TARGET: esp32s3
+
+jobs:
+  host-tests:
+    name: Firmware host tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # No ESP-IDF here on purpose. The provisioning policy is pure C so it
+      # can be tested in seconds by anyone, which is the point of separating
+      # it from the ESP-IDF glue in the first place.
+      - name: Configure
+        run: cmake -S firmware/vg100/test/host -B build/firmware-host -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build/firmware-host
+
+      - name: Test
+        run: ctest --test-dir build/firmware-host --output-on-failure
+
+  build:
+    name: Firmware build
+    runs-on: ubuntu-latest
+    # Pinned to a version, not a moving tag. A firmware build that silently
+    # follows the latest ESP-IDF is one nobody can reproduce, and the board
+    # on someone's desk is flashed from a fixed toolchain.
+    container: espressif/idf:v5.5
+    steps:
+      - uses: actions/checkout@v4
+
+      # The image ships the toolchain but does not activate it, so every step
+      # that needs `idf.py` sources the environment first.
+      - name: Build for ${{ env.IDF_TARGET }}
+        shell: bash
+        working-directory: firmware/vg100
+        run: |
+          . "$IDF_PATH/export.sh"
+          idf.py set-target "$IDF_TARGET"
+          idf.py build
+
+      - name: Report image size
+        shell: bash
+        working-directory: firmware/vg100
+        run: |
+          . "$IDF_PATH/export.sh"
+          idf.py size
