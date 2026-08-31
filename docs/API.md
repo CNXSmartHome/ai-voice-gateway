@@ -52,6 +52,79 @@ Tokens are short-lived and there is no refresh endpoint yet: when one expires
 the client authenticates again. Roles are recorded on the membership but are
 not yet enforced as permissions.
 
+## Properties
+
+A property is a place the system covers — a villa, a house, a floor. It owns
+rooms, gateways, and devices, and it is what `POST /v1/gateways/claim` binds
+hardware to.
+
+- POST `/v1/properties` — implemented
+- GET `/v1/properties` — implemented
+- GET `/v1/properties/{id}` — implemented
+- PATCH `/v1/properties/{id}` — implemented
+
+```json
+POST /v1/properties
+{
+  "organizationId": "org_1",
+  "name": "Villa One",
+  "timezone": "Asia/Bangkok"
+}
+```
+
+`organizationId` is required: a caller can be a member of more than one
+organization, and the API does not guess. `timezone` is an IANA zone,
+validated against the runtime's own database and defaulting to `UTC`. It is
+settable here because a property is a physical place and everything
+time-shaped that follows — schedules, an evening scene, "goodnight" — is
+wrong without it.
+
+Returns `201`:
+
+```json
+{
+  "id": "prop_1",
+  "organizationId": "org_1",
+  "name": "Villa One",
+  "timezone": "Asia/Bangkok",
+  "createdAt": "2026-08-31T00:00:00.000Z",
+  "updatedAt": "2026-08-31T00:00:00.000Z"
+}
+```
+
+`GET /v1/properties` returns the properties of every organization the caller
+belongs to, scoped from their memberships rather than from any parameter.
+`PATCH` accepts `name`, `timezone`, or both, and refuses a body containing
+neither. It does not accept `organizationId`: moving a property would carry
+its rooms, gateways, and devices across an authorization boundary, and that
+is not a rename.
+
+**Failure semantics.** `400` for a malformed body, an unknown field, or a
+`PATCH` that changes nothing. `401` for an unauthenticated caller. `409` for
+a name already used in the same organization — the caller can list their own
+properties, so there is nothing to hide and "that name is taken" is what they
+need to know.
+
+Then two codes that are deliberately different from each other:
+
+| Situation | Code |
+| --- | --- |
+| The property does not exist | `404` |
+| The property belongs to an organization the caller is not in | `404` |
+| The caller is a `MEMBER` of the owning organization | `403` |
+
+The first two are indistinguishable on purpose: a caller outside an
+organization has no way to know its properties exist, and this endpoint must
+not become the way. The third is different because that caller already knows
+— `GET` returns the property to them — so a `404` would only mislead.
+`MEMBER` is the role for residents and guests, who live in a property rather
+than define it.
+
+This is a finer distinction than `POST /v1/gateways/claim` draws, which
+answers every rejection identically. That endpoint's caller has no read
+access to properties at all, so it cannot make the distinction without
+leaking; here the caller's read access already settles it.
+
 ## Gateway
 - POST `/v1/gateways/claim` — implemented (VG-005)
 - GET `/v1/gateways`
