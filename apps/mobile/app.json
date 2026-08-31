@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "AI Voice Gateway",
+    "slug": "ai-voice-gateway",
+    "scheme": "aivoicegateway",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "platforms": ["ios", "android"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.cnxsmarthome.aivoicegateway"
+    },
+    "android": {
+      "package": "com.cnxsmarthome.aivoicegateway",
+      "adaptiveIcon": {
+        "backgroundColor": "#0B1F33",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": ["expo-router", "expo-secure-store"]
+  }
+}

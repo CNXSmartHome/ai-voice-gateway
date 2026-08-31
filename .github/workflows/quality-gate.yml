@@ -121,6 +121,15 @@ jobs:
       - name: Build
         run: npm run build
 
+      # `npm run build` compiles the TypeScript services. The mobile app is
+      # bundled by Metro instead, so it gets its own step: this is what
+      # catches an import that typechecks but cannot resolve at runtime,
+      # which is how a missing native peer dependency shows up.
+      - name: Bundle the mobile app
+        env:
+          EXPO_PUBLIC_API_URL: https://api.invalid
+        run: npm run bundle --workspace @vg/mobile
+
   security:
     name: Dependency audit
     runs-on: ubuntu-latest

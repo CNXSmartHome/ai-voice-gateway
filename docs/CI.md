@@ -25,6 +25,13 @@ together rather than one hiding the other.
   Runs a PostgreSQL 16 service container so the database integration tests
   execute against a real database rather than a mock. The container is
   reachable only from the job and its credentials are throwaway.
+
+  It also bundles the mobile app. `npm run build` compiles the TypeScript
+  services, and the Expo app is not one of them — Metro bundles it. Running
+  `expo export` for both platforms needs no native toolchain and catches an
+  import that typechecks but cannot resolve at runtime, which is how a
+  missing native peer dependency shows up. It earned its place the day it was
+  added, by catching exactly that.
 - **Dependency audit** — production dependencies must be clean at any
   severity (`--audit-level=low`, blocking). The dev-dependency audit is
   advisory, since dev packages do not ship to a runtime.
@@ -105,6 +112,7 @@ npm run prisma:migrate --workspace @vg/api   # requires DATABASE_URL
 npm run test:unit
 npm run test:integration
 npm run build
+EXPO_PUBLIC_API_URL=https://api.invalid npm run bundle --workspace @vg/mobile
 npm audit --omit=dev --audit-level=low
 ```
 
