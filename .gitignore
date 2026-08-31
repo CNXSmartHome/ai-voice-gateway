@@ -28,6 +28,11 @@ firmware/**/sdkconfig
 firmware/**/sdkconfig.old
 firmware/**/managed_components/
 
+# Factory provisioning data. A filled-in copy of factory_nvs.csv.example
+# carries a per-device proof of possession; only the template is committed.
+factory_nvs.csv
+*.nvs.bin
+
 # Mobile
 apps/mobile/ios/Pods/
 apps/mobile/android/.gradle/

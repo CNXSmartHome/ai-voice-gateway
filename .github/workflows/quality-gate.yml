@@ -52,6 +52,18 @@ jobs:
           fi
           echo "No tracked key material."
 
+      # A filled-in copy of firmware/vg100/factory_nvs.csv.example carries a
+      # per-device proof of possession. Only the template belongs here.
+      - name: No committed factory provisioning data
+        run: |
+          matches="$(git ls-files -- '*factory_nvs.csv')"
+          if [ -n "$matches" ]; then
+            echo "::error::Factory provisioning data is tracked in git. It contains a device proof of possession; commit only the .example template (AI_GOVERNANCE.md - Secrets policy):"
+            echo "$matches"
+            exit 1
+          fi
+          echo "No tracked factory provisioning data."
+
   quality:
     name: Lint, typecheck, test, build
     runs-on: ubuntu-latest

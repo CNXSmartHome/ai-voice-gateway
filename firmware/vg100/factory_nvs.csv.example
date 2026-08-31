@@ -1,0 +1,29 @@
+# Template for the vg_factory partition image. Copy it, fill in the values
+# for one device, generate the image, flash it, and delete the copy.
+#
+#   cp factory_nvs.csv.example /tmp/factory_nvs.csv
+#   # edit /tmp/factory_nvs.csv
+#   python $IDF_PATH/components/nvs_flash/nvs_partition_generator/nvs_partition_gen.py \
+#       generate /tmp/factory_nvs.csv /tmp/factory_nvs.bin 0x4000
+#   esptool.py write_flash 0x12000 /tmp/factory_nvs.bin
+#
+# 0x12000 and 0x4000 are the vg_factory offset and size in partitions.csv.
+#
+# serial    must match the number registered with
+#           `node apps/api/scripts/register-gateway.js <serial>` and the
+#           number printed on the label: `^[A-Za-z0-9-]{4,64}$`.
+#
+# prov_pop  the proof of possession for the BLE provisioning session, 16 to
+#           64 characters. Generate it per device from a CSPRNG, for example
+#           `openssl rand -hex 16`, print it on the label, and do not reuse
+#           it across devices -- one leaked PoP would otherwise provision
+#           every gateway ever built.
+#
+# A filled-in copy of this file contains a secret. It does not belong in this
+# repository, in a shared drive, or in a shell history; the values live in
+# whatever the manufacturing line uses for key material and nowhere else.
+# The `.example` suffix is what keeps this template distinguishable from one.
+key,type,encoding,value
+vg_device,namespace,,
+serial,data,string,REPLACE-WITH-SERIAL
+prov_pop,data,string,REPLACE-WITH-PROOF-OF-POSSESSION

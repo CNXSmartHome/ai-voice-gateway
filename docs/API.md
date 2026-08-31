@@ -131,6 +131,41 @@ does not have. Use the script, which requires database credentials:
 npm run gateway:register --workspace @vg/api -- VG100-0001 "VG-100"
 ```
 
+### Provisioning a gateway onto Wi-Fi (BLE, VG-007)
+
+This one is not an HTTP endpoint and never can be: a factory-fresh gateway
+has no network, so the phone reaches it over BLE. It is documented here
+because the mobile app (VG-008) is the other end of it.
+
+The device runs the ESP-IDF `wifi_provisioning` protocol with the BLE scheme
+and **Security1**, so the app can use the standard `ESPProvision` libraries
+rather than a bespoke GATT client.
+
+| | |
+| --- | --- |
+| Advertised name | `VG100-` plus the last five characters of the serial number |
+| Security | Security1, X25519 + AES-CTR |
+| Proof of possession | Per device, printed on the label; the user scans or types it |
+| Standard endpoints | `prov-session`, `prov-config`, `prov-scan` |
+| Extra endpoint | `vg-identity` |
+
+`vg-identity` answers with the full serial number, because the advertised
+name carries only a truncated one:
+
+```json
+{ "serial_number": "VG100-000123", "firmware_version": "0.1.0" }
+```
+
+The app should read it after the session is established and before sending
+credentials, so it can confirm it is provisioning the gateway the user
+scanned rather than a neighbour's. The same serial is what
+`POST /v1/gateways/claim` takes.
+
+Credentials that fail to authenticate are reported to the app and **not**
+kept by the device, so a mistyped password can simply be sent again in the
+same session. Full behaviour is in
+[`../firmware/vg100/README.md`](../firmware/vg100/README.md).
+
 ## Rooms
 - GET `/v1/properties/{property_id}/rooms`
 - POST `/v1/properties/{property_id}/rooms`

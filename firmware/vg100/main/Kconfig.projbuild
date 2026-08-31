@@ -1,0 +1,29 @@
+menu "VG-100 Gateway"
+
+    config VG_FACTORY_RESET_GPIO
+        int "Factory reset GPIO"
+        default 0
+        range 0 48
+        help
+            Input for the factory reset control, active low with the internal
+            pull-up enabled. The default is the BOOT button on an ESP32-S3
+            development board.
+
+            This is a build option rather than a constant because the VG-100
+            pinout is not frozen. Freezing it is a hardware decision, and
+            AI_GOVERNANCE.md puts hardware pinout changes after freeze behind
+            Product Owner approval.
+
+    config VG_FACTORY_RESET_HOLD_MS
+        int "Factory reset hold time (ms)"
+        default 5000
+        range 1000 30000
+        help
+            How long the reset control must be held before stored Wi-Fi
+            credentials are erased and the device reboots into provisioning.
+
+            Long enough that it cannot happen by accident: the action is not
+            recoverable, and the owner has to provision the gateway again
+            from the app.
+
+endmenu

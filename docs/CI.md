@@ -9,6 +9,7 @@ policy is enforced by the pipeline rather than by anyone remembering to check.
 | Workflow | File | Triggers | Purpose |
 | --- | --- | --- | --- |
 | Quality Gate | `quality-gate.yml` | PR, push to `main` | Policy checks, lint, format, typecheck, tests, build, dependency audit |
+| Firmware | `firmware.yml` | PR, push to `main` | Host tests for the pure-C firmware policy, and an ESP-IDF compile |
 | PR Governance | `pr-governance.yml` | PR opened/edited/labeled | Enforces title task reference and risk labelling |
 | Security | `security.yml` | PR, push to `main`, weekly | CodeQL analysis and dependency review |
 | Auto-merge | `auto-merge.yml` | Review submitted, label changed | Enables native auto-merge when the policy is satisfied |
@@ -18,8 +19,8 @@ policy is enforced by the pipeline rather than by anyone remembering to check.
 Three independent jobs, so a lint failure and an audit failure surface
 together rather than one hiding the other.
 
-- **Repository policy** — required governance documents exist; no `.env` file
-  or private key is tracked.
+- **Repository policy** — required governance documents exist; no `.env`
+  file, private key, or filled-in factory provisioning CSV is tracked.
 - **Lint, typecheck, test, build** — the same commands developers run locally.
   Runs a PostgreSQL 16 service container so the database integration tests
   execute against a real database rather than a mock. The container is
@@ -27,6 +28,27 @@ together rather than one hiding the other.
 - **Dependency audit** — production dependencies must be clean at any
   severity (`--audit-level=low`, blocking). The dev-dependency audit is
   advisory, since dev packages do not ship to a runtime.
+
+### Firmware
+
+Two jobs, mirroring how the firmware is split (VG-007).
+
+- **Firmware host tests** — configures, builds, and runs
+  `firmware/vg100/test/host` with a stock compiler. The provisioning policy
+  is pure C precisely so that this is possible: the decisions worth asserting
+  about — when credentials are kept, how the backoff grows, when provisioning
+  reopens — are tested in seconds, with no toolchain and no board.
+- **Firmware build** — compiles `firmware/vg100` for `esp32s3` inside
+  `espressif/idf:v5.5`, so a change that breaks the ESP-IDF build fails the
+  pull request rather than the next person to flash a device. The image tag
+  is pinned: a firmware build that follows the latest ESP-IDF is one nobody
+  can reproduce.
+
+Neither job is filtered by path. The host tests take seconds; the ESP-IDF
+build costs a few minutes on pull requests that do not touch firmware, which
+is the price of both being required checks that always report. A path filter
+would make them skip, and a required check that never reports blocks a merge
+forever.
 
 ### PR Governance
 
@@ -94,10 +116,35 @@ echo '{"title":"[VG-002] CI baseline","labels":["risk:low"],"checksPassed":true,
   | node tools/governance/dist/cli.js automerge
 ```
 
+The firmware host tests need a C compiler and CMake, and nothing else:
+
+```bash
+cmake -S firmware/vg100/test/host -B build/firmware-host -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/firmware-host
+ctest --test-dir build/firmware-host --output-on-failure
+```
+
+The ESP-IDF build needs the toolchain. A machine without one — a Windows
+workstation, for instance — can borrow the same container CI uses, on the
+remote Docker host described below:
+
+```bash
+docker run --rm -v "$PWD":/w -w /w/firmware/vg100 espressif/idf:v5.5 \
+  bash -c '. "$IDF_PATH/export.sh" && idf.py set-target esp32s3 && idf.py build'
+```
+
+The image is large — roughly 12 GB unpacked, since it carries a toolchain for
+every target — so it is worth pulling once rather than per build. The build
+writes `firmware/vg100/build/` as root when run this way; it is git-ignored,
+but removing it needs the same container.
+
 ## Repository settings
 
 These are repository settings rather than files, so they are recorded here for
-auditability. **All of them are applied.**
+auditability. **All of them are applied**, with one exception: VG-007 adds
+`Firmware host tests` and `Firmware build` to the required checks below, and
+branch protection has to be re-applied for those to take effect. Until it is,
+the two jobs run and report but do not gate a merge.
 
 ### Branch protection for `main`
 
@@ -114,7 +161,7 @@ gh api -X PUT repos/CNXSmartHome/ai-voice-gateway/branches/main/protection \
 | Required approving reviews | **0** — see below |
 | Require conversation resolution | yes |
 | Require status checks, branch up to date | yes |
-| Required checks | `Repository policy`, `Lint, typecheck, test, build`, `Dependency audit`, `Title and label policy`, `CodeQL` |
+| Required checks | `Repository policy`, `Lint, typecheck, test, build`, `Dependency audit`, `Firmware host tests`, `Firmware build`, `Title and label policy`, `CodeQL` |
 | Include administrators | yes |
 | Force pushes / deletions | disabled |
 

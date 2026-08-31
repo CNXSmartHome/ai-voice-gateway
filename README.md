@@ -31,15 +31,16 @@ packages/
 tools/
   governance/     AI_GOVERNANCE.md pull request policy, enforced by CI
 firmware/
-  vg100/          ESP32-S3 / ESP-IDF firmware (reserved - VG-007)
+  vg100/          ESP32-S3 / ESP-IDF gateway firmware
 docs/             Product, architecture, API, and device model specs
   CI.md           Pipeline reference and required repository settings
   adr/            Architecture decision records
 .github/          Issue templates, PR template, CI workflows
 ```
 
-`apps/mobile` and `firmware/vg100` are placeholders reserved for their tasks.
-They are deliberately outside the npm workspace until initialized.
+`apps/mobile` is a placeholder reserved for VG-008. `firmware/vg100` builds
+with ESP-IDF and its own toolchain. Both are deliberately outside the npm
+workspace, so `npm install` and `npm run build` stay unaffected by them.
 
 ## Requirements
 
@@ -109,9 +110,29 @@ Storage enums are SCREAMING_SNAKE_CASE; the domain uses the canonical
 lowercase names. `apps/api/src/database/domain-mapping.ts` is the only place
 that knows both, and tests assert the two never drift.
 
+## Firmware
+
+The VG-100 gateway firmware is in [`firmware/vg100`](firmware/vg100) and
+builds with ESP-IDF v5.5, not npm. Its provisioning policy — when Wi-Fi
+credentials are kept, how reconnection backs off, when provisioning reopens —
+is pure C with no ESP-IDF dependency, so it is tested on a host compiler
+rather than on a board:
+
+```bash
+cmake -S firmware/vg100/test/host -B build/firmware-host
+cmake --build build/firmware-host
+ctest --test-dir build/firmware-host --output-on-failure
+```
+
+CI runs those and an ESP-IDF compile for `esp32s3`. See
+[`firmware/vg100/README.md`](firmware/vg100/README.md) for the provisioning
+behaviour, the partition layout, and what manufacturing has to write to each
+device.
+
 ## Checks
 
-The same commands run locally and in CI (`.github/workflows/quality-gate.yml`):
+The same commands run locally and in CI (`.github/workflows/quality-gate.yml`
+and `.github/workflows/firmware.yml`):
 
 | Command | Purpose |
 | --- | --- |
