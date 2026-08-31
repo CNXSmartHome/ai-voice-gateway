@@ -37,6 +37,11 @@ export const CLAIMABLE_STATE = {
  */
 const CLAIMED_STATUS = 'OFFLINE';
 
+export interface ListGatewaysFilter {
+  /** Narrows the list to one property. Optional. */
+  readonly propertyId?: string;
+}
+
 export interface ClaimGatewayInput {
   readonly serialNumber: string;
   readonly propertyId: string;
@@ -134,6 +139,53 @@ export class GatewaysService {
   }
 
   /**
+   * Lists the gateways in every organization the caller belongs to.
+   *
+   * Scoped through the owning property rather than from anything the caller
+   * supplies, so there is no parameter to tamper with. An unclaimed gateway
+   * has no property and therefore appears to nobody: the serial numbers of
+   * manufactured-but-unsold hardware are not public.
+   */
+  async list(caller: AuthenticatedUser, filter: ListGatewaysFilter = {}): Promise<GatewayView[]> {
+    const organizationIds = caller.memberships.map((membership) => membership.organizationId);
+    if (organizationIds.length === 0) return [];
+
+    const gateways = await this.prisma.gateway.findMany({
+      where: {
+        property: {
+          organizationId: { in: organizationIds },
+          // A filter, not a lookup: a property the caller cannot see narrows
+          // the result to nothing rather than raising, so the parameter
+          // cannot be used to test whether a property id is real.
+          ...(filter.propertyId === undefined ? {} : { id: filter.propertyId }),
+        },
+      },
+      select: GATEWAY_SELECT,
+      orderBy: [{ propertyId: 'asc' }, { name: 'asc' }],
+    });
+
+    return gateways.map(toGatewayView);
+  }
+
+  /**
+   * One gateway, if the caller is a member of the organization that owns it.
+   *
+   * A gateway in another organization is the same 404 as one that does not
+   * exist, so this cannot be used to discover which ids or serials are real.
+   */
+  async get(caller: AuthenticatedUser, gatewayId: string): Promise<GatewayView> {
+    const gateway = await this.prisma.gateway.findUnique({
+      where: { id: gatewayId },
+      select: { ...GATEWAY_SELECT, property: { select: { organizationId: true } } },
+    });
+
+    if (gateway === null || gateway.property === null) throw gatewayNotFound();
+    if (!this.isMember(caller, gateway.property.organizationId)) throw gatewayNotFound();
+
+    return toGatewayView(gateway);
+  }
+
+  /**
    * Records a manufactured gateway, so there is something to claim.
    *
    * Deliberately has no HTTP route: creating unclaimed hardware is a
@@ -152,6 +204,11 @@ export class GatewaysService {
     });
 
     return toGatewayView(gateway);
+  }
+
+  /** True when the caller belongs to the organization at all. */
+  private isMember(caller: AuthenticatedUser, organizationId: string): boolean {
+    return caller.memberships.some((membership) => membership.organizationId === organizationId);
   }
 
   /**
@@ -177,7 +234,18 @@ function isReferentialFailure(error: unknown): boolean {
 }
 
 /**
- * The single rejection this endpoint produces.
+ * The rejection for a gateway the caller cannot see.
+ *
+ * One shape whether it does not exist, was never claimed, or belongs to
+ * another organization, so the read endpoints cannot be used to discover
+ * which gateway ids or serial numbers are real.
+ */
+function gatewayNotFound(): NotFoundException {
+  return new NotFoundException('No such gateway.');
+}
+
+/**
+ * The single rejection the claim endpoint produces.
  *
  * One shape for every reason: an unknown serial, a claimed gateway, a
  * property that does not exist, and a property belonging to someone else are
