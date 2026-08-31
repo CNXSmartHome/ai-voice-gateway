@@ -133,10 +133,37 @@ under an authorization that no longer applies.
 
 ## Gateway
 - POST `/v1/gateways/claim` — implemented (VG-005)
-- GET `/v1/gateways`
-- GET `/v1/gateways/{id}`
+- GET `/v1/gateways` — implemented
+- GET `/v1/gateways/{id}` — implemented
 - PATCH `/v1/gateways/{id}`
 - POST `/v1/gateways/{id}/ota`
+
+### GET `/v1/gateways` and GET `/v1/gateways/{id}`
+
+The gateways of every organization the caller belongs to, scoped from their
+memberships rather than from any parameter. Both return the same shape the
+claim does.
+
+`?propertyId=` narrows the list to one property. It is a filter, not a
+lookup: a property the caller cannot see yields an empty list rather than an
+error, so the parameter cannot be used to test whether a property id is real.
+
+**Unclaimed gateways are invisible to everyone.** They belong to no
+organization, and the serial numbers of manufactured-but-unsold hardware are
+not something a customer account should be able to enumerate. They exist only
+to the registration script and to the device itself.
+
+A `MEMBER` can read: a resident should be able to see the gateway in their
+room. Writing to one is another matter, and has its own task.
+
+**Failure semantics.** `400` for an unknown query parameter. `401` for an
+unauthenticated caller. Everything else is the same `404` — a gateway that
+does not exist, one that is unclaimed, and one in another organization are
+indistinguishable, for the same reason the claim rejections are.
+
+This is how an app learns that a gateway has come online: the claim leaves it
+`OFFLINE`, the VG-006 heartbeat moves it to `ONLINE`, and this is what reads
+that back.
 
 ### POST `/v1/gateways/claim`
 

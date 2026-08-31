@@ -37,6 +37,8 @@ describe('GatewaysService', () => {
   let gatewayUpdateMany: jest.Mock;
   let gatewayFindUniqueOrThrow: jest.Mock;
   let gatewayCreate: jest.Mock;
+  let gatewayFindMany: jest.Mock;
+  let gatewayFindUnique: jest.Mock;
   let service: GatewaysService;
 
   beforeEach(() => {
@@ -45,6 +47,10 @@ describe('GatewaysService', () => {
     gatewayUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
     gatewayFindUniqueOrThrow = jest.fn().mockResolvedValue(CLAIMED_ROW);
     gatewayCreate = jest.fn().mockResolvedValue(CLAIMED_ROW);
+    gatewayFindMany = jest.fn().mockResolvedValue([CLAIMED_ROW]);
+    gatewayFindUnique = jest
+      .fn()
+      .mockResolvedValue({ ...CLAIMED_ROW, property: { organizationId: 'org_1' } });
 
     const tx = {
       property: { findUnique: propertyFindUnique },
@@ -58,7 +64,11 @@ describe('GatewaysService', () => {
 
     service = new GatewaysService({
       $transaction: (callback: (client: unknown) => unknown) => callback(tx),
-      gateway: { create: gatewayCreate },
+      gateway: {
+        create: gatewayCreate,
+        findMany: gatewayFindMany,
+        findUnique: gatewayFindUnique,
+      },
     } as unknown as PrismaService);
   });
 
@@ -299,6 +309,87 @@ describe('GatewaysService', () => {
       await service.claim(OWNER, INPUT);
 
       expect(roomFindUnique).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('list', () => {
+    /*
+     * Scoped through the owning property, not from anything the caller sends.
+     * An unclaimed gateway has no property, so it falls out of this query
+     * without needing a status filter to remember to exclude it — the serial
+     * numbers of manufactured-but-unsold hardware are not public.
+     */
+    it('scopes to the organizations the caller belongs to', async () => {
+      await service.list(caller([{ organizationId: 'org_1', role: 'MEMBER' }]));
+
+      expect(gatewayFindMany.mock.calls[0]?.[0]?.where).toEqual({
+        property: { organizationId: { in: ['org_1'] } },
+      });
+    });
+
+    it('narrows to a property when one is given', async () => {
+      await service.list(OWNER, { propertyId: 'prop_1' });
+
+      expect(gatewayFindMany.mock.calls[0]?.[0]?.where).toEqual({
+        property: { organizationId: { in: ['org_1'] }, id: 'prop_1' },
+      });
+    });
+
+    it('keeps the property filter inside the membership scope', async () => {
+      // The filter narrows; it never widens. A property in another
+      // organization simply matches nothing.
+      await service.list(OWNER, { propertyId: 'prop_elsewhere' });
+
+      const where = gatewayFindMany.mock.calls[0]?.[0]?.where as {
+        property: { organizationId: unknown };
+      };
+      expect(where.property.organizationId).toEqual({ in: ['org_1'] });
+    });
+
+    it('returns an empty list for a caller with no memberships, without querying', async () => {
+      await expect(service.list(caller([]))).resolves.toEqual([]);
+      expect(gatewayFindMany).not.toHaveBeenCalled();
+    });
+
+    it('orders deterministically', async () => {
+      await service.list(OWNER);
+
+      expect(gatewayFindMany.mock.calls[0]?.[0]?.orderBy).toEqual([
+        { propertyId: 'asc' },
+        { name: 'asc' },
+      ]);
+    });
+  });
+
+  describe('get', () => {
+    it('returns a gateway in an organization the caller belongs to', async () => {
+      await expect(service.get(OWNER, 'gw_1')).resolves.toMatchObject({ id: 'gw_1' });
+    });
+
+    it('does not leak the ownership it joined on', async () => {
+      // `property` is selected to decide access, not to be returned.
+      const view = await service.get(OWNER, 'gw_1');
+
+      expect(view).not.toHaveProperty('property');
+    });
+
+    it('answers a gateway in another organization exactly as a missing one', async () => {
+      const foreign = await service
+        .get(caller([{ organizationId: 'org_2', role: 'OWNER' }]), 'gw_1')
+        .catch((error: unknown) => error);
+
+      gatewayFindUnique.mockResolvedValue(null);
+      const missing = await service.get(OWNER, 'gw_1').catch((error: unknown) => error);
+
+      expect(foreign).toBeInstanceOf(NotFoundException);
+      expect(missing).toBeInstanceOf(NotFoundException);
+      expect((foreign as NotFoundException).message).toBe((missing as NotFoundException).message);
+    });
+
+    it('hides an unclaimed gateway, which belongs to no organization', async () => {
+      gatewayFindUnique.mockResolvedValue({ ...CLAIMED_ROW, property: null });
+
+      await expect(service.get(OWNER, 'gw_1')).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 
