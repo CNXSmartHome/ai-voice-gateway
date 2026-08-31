@@ -31,15 +31,16 @@ packages/
 tools/
   governance/     AI_GOVERNANCE.md pull request policy, enforced by CI
 firmware/
-  vg100/          ESP32-S3 / ESP-IDF firmware (reserved - VG-007)
+  vg100/          ESP32-S3 / ESP-IDF gateway firmware
 docs/             Product, architecture, API, and device model specs
   CI.md           Pipeline reference and required repository settings
   adr/            Architecture decision records
 .github/          Issue templates, PR template, CI workflows
 ```
 
-`firmware/vg100` is a placeholder reserved for VG-007 and stays outside the
-npm workspace: ESP-IDF builds with CMake and its own toolchain.
+`apps/mobile` is an Expo app and `firmware/vg100` is an ESP-IDF project.
+The app is in the npm workspace; the firmware is not, because ESP-IDF builds
+with CMake and its own toolchain.
 
 ## Requirements
 
@@ -129,9 +130,29 @@ module, so `npm run android` builds and installs a development build.
 CI runs `npm run bundle --workspace @vg/mobile` instead, which catches an
 import that typechecks but cannot resolve at runtime.
 
+## Firmware
+
+The VG-100 gateway firmware is in [`firmware/vg100`](firmware/vg100) and
+builds with ESP-IDF v5.5, not npm. Its provisioning policy — when Wi-Fi
+credentials are kept, how reconnection backs off, when provisioning reopens —
+is pure C with no ESP-IDF dependency, so it is tested on a host compiler
+rather than on a board:
+
+```bash
+cmake -S firmware/vg100/test/host -B build/firmware-host
+cmake --build build/firmware-host
+ctest --test-dir build/firmware-host --output-on-failure
+```
+
+CI runs those and an ESP-IDF compile for `esp32s3`. See
+[`firmware/vg100/README.md`](firmware/vg100/README.md) for the provisioning
+behaviour, the partition layout, and what manufacturing has to write to each
+device.
+
 ## Checks
 
-The same commands run locally and in CI (`.github/workflows/quality-gate.yml`):
+The same commands run locally and in CI (`.github/workflows/quality-gate.yml`
+and `.github/workflows/firmware.yml`):
 
 | Command | Purpose |
 | --- | --- |

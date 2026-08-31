@@ -4,6 +4,7 @@ import { AuthModule } from './auth/auth.module';
 import { DatabaseModule } from './database/database.module';
 import { GatewaysModule } from './gateways/gateways.module';
 import { HealthModule } from './health/health.module';
+import { PropertiesModule } from './properties/properties.module';
 
 /**
  * Root module.
@@ -17,6 +18,6 @@ import { HealthModule } from './health/health.module';
  * unless they opt out with `@Public()`.
  */
 @Module({
-  imports: [DatabaseModule, AuthModule, HealthModule, GatewaysModule],
+  imports: [DatabaseModule, AuthModule, HealthModule, PropertiesModule, GatewaysModule],
 })
 export class AppModule {}

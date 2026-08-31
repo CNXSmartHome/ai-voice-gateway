@@ -1,0 +1,19 @@
+# VG-100 partition table. ESP32-S3, 8 MB flash.
+#
+# Offsets are written out rather than left to the generator because this
+# layout is a compatibility contract. Changing it after devices ship means
+# reflashing them over a wire, so the OTA slots are reserved here even though
+# nothing writes to them until VG-030, and the factory partition is sized for
+# an identity that will grow (VG-028 adds the device credential).
+#
+# vg_factory is written once at manufacture and read-only afterwards. It is
+# separate from nvs so that a factory reset, which erases nvs, cannot take
+# the device's identity with it.
+#
+# Name,       Type, SubType, Offset,   Size,     Flags
+nvs,          data, nvs,     0x9000,   0x6000,
+otadata,      data, ota,     0xf000,   0x2000,
+phy_init,     data, phy,     0x11000,  0x1000,
+vg_factory,   data, nvs,     0x12000,  0x4000,
+ota_0,        app,  ota_0,   0x20000,  0x300000,
+ota_1,        app,  ota_1,   0x320000, 0x300000,
