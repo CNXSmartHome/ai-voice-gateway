@@ -9,3 +9,11 @@ export {
 export { DEVICE_TYPES, isDeviceType, type DeviceType } from './device-type';
 export { PLATFORMS, isPlatform, type Platform } from './platform';
 export type { Device, Organization, Property, Room } from './device';
+export {
+  RESOURCE_KINDS,
+  isResourceKind,
+  type ControlAction,
+  type ControlValue,
+  type ResourceKind,
+  type ResourceTarget,
+} from './resource';

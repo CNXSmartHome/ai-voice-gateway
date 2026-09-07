@@ -33,6 +33,12 @@ Responsibilities:
 - command authorization
 - platform adapter dispatch
 
+Implemented by the resource registry and control pipeline (VG-040): every
+command runs tenancy, resolution, policy, then dispatch, in that order, and
+`ResourcesModule` exports no adapter so there is no second path. See
+[ADR 0003](adr/0003-resource-registry-and-control-pipeline.md). VG-009,
+VG-012, and VG-014/015/016 build on that boundary rather than replacing it.
+
 ### 4. Integration Service
 MVP adapter: Tuya.
 
@@ -65,6 +71,8 @@ Responsibilities:
 
 ## Non-negotiable boundaries
 - AI never calls Tuya-specific APIs directly.
+- Provider identifiers never cross the adapter boundary: no resource view
+  carries a platform or an external id.
 - Tuya credentials never reach the gateway.
 - Gateway does not contain the smart-home device database.
 - Production deployment occurs through CI/CD only.

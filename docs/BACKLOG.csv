@@ -37,3 +37,4 @@ VG-035,Failure and chaos tests,4,P0,medium,qa,no
 VG-036,App UI cleanup,4,P2,low,mobile,no
 VG-037,Release candidate pipeline,4,P0,high,infra,no
 VG-038,Final acceptance checklist,4,P0,medium,qa,yes
+VG-040,Resource registry and control pipeline,2,P0,medium,integration,no

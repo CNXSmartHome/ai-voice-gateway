@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 import { CAPABILITIES, CAPABILITIES_BY_DEVICE_TYPE } from '../src/capability';
 import { DEVICE_TYPES } from '../src/device-type';
+import { RESOURCE_KINDS } from '../src/resource';
 
 /**
  * docs/DEVICE_MODEL.md is the specification; this package is its
@@ -65,5 +66,17 @@ describe('DEVICE_MODEL.md contract', () => {
     for (const capability of CAPABILITIES) {
       expect([...documented]).toContain(capability);
     }
+  });
+
+  it('gives resources exactly the documented device types as kinds', () => {
+    // docs/DEVICE_MODEL.md: "Resource kinds are exactly the MVP device
+    // types." A second vocabulary would be two places to add `fan` to.
+    expect([...RESOURCE_KINDS].sort()).toEqual(bulletsUnder('## MVP device types').sort());
+  });
+
+  it('documents the resource concept the registry implements', () => {
+    expect(doc).toMatch(/^## Resources$/m);
+    expect(doc).toMatch(/Villa\*\* = Property/);
+    expect(doc).toMatch(/Zone\*\* = Room/);
   });
 });
