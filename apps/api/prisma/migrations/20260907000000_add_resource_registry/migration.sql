@@ -49,6 +49,28 @@ CREATE INDEX "resources_room_id_idx" ON "resources"("room_id");
 -- CreateIndex
 CREATE UNIQUE INDEX "resources_property_id_room_id_kind_name_key" ON "resources"("property_id", "room_id", "kind", "name");
 
+-- The constraint above does not cover a resource that has no room.
+--
+-- PostgreSQL treats NULLs as distinct in a UNIQUE index, so two rows with
+-- `room_id IS NULL` and the same property, kind, and name both satisfy it --
+-- which is exactly the indistinguishable duplicate registration is supposed
+-- to reject. Nothing downstream is unsafe, because the resolver reports
+-- AMBIGUOUS rather than choosing between them, but the database invariant
+-- was incomplete and the ambiguity was unfixable: no target a caller can
+-- express distinguishes the two rows.
+--
+-- A partial index over the same columns closes it. Written by hand because
+-- Prisma 6.12 can express neither a partial index nor NULLS NOT DISTINCT in
+-- schema.prisma. Split into two indexes rather than one `NULLS NOT DISTINCT`
+-- constraint so that the index Prisma does generate stays byte-for-byte what
+-- Prisma would generate, and only this one is outside the schema language.
+--
+-- `prisma-schema-contract.spec.ts` asserts this index is still here, so a
+-- future `prisma migrate dev` that offers to drop it fails CI instead.
+CREATE UNIQUE INDEX "resources_property_id_kind_name_unassigned_key"
+    ON "resources"("property_id", "kind", "name")
+    WHERE "room_id" IS NULL;
+
 -- CreateIndex
 CREATE UNIQUE INDEX "resource_bindings_resource_id_key" ON "resource_bindings"("resource_id");
 

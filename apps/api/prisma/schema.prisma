@@ -219,6 +219,17 @@ model Resource {
   /// by anything a caller says, so the resolver could never choose between
   /// them. Rejecting the second at write time turns an unanswerable runtime
   /// ambiguity into an error at the point someone can still fix it.
+  ///
+  /// This covers resources that have a zone. It does NOT cover unassigned
+  /// ones: PostgreSQL treats NULLs as distinct, so two rows with a null
+  /// `room_id` and the same property, kind, and name both satisfy it. The
+  /// migration adds a partial unique index over
+  /// (property_id, kind, name) WHERE room_id IS NULL for that half, because
+  /// Prisma cannot express a partial index or NULLS NOT DISTINCT here.
+  ///
+  /// Do not remove that index. It is not represented in this file, so
+  /// `prisma migrate dev` will offer to drop it;
+  /// `prisma-schema-contract.spec.ts` fails if it goes.
   @@unique([propertyId, roomId, kind, name])
   @@index([propertyId])
   @@index([roomId])

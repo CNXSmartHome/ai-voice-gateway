@@ -275,3 +275,67 @@ describe('auth migration (VG-004)', () => {
     expect(initial).not.toMatch(/\busers\b|\bmemberships\b/);
   });
 });
+
+describe('resource registry migration (VG-040)', () => {
+  const migration = readFileSync(
+    join(
+      __dirname,
+      '..',
+      'prisma',
+      'migrations',
+      '20260907000000_add_resource_registry',
+      'migration.sql',
+    ),
+    'utf8',
+  );
+
+  it('creates both tables', () => {
+    for (const table of ['resources', 'resource_bindings']) {
+      expect(migration).toContain(`CREATE TABLE "${table}"`);
+    }
+  });
+
+  /** The migration with its `--` comments removed, so prose is not asserted on. */
+  const statements = migration
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('--'))
+    .join('\n');
+
+  it('is additive: it drops and alters nothing existing', () => {
+    expect(statements).not.toMatch(/\bDROP\b/i);
+    // The only tables altered are the two this migration creates; the enum
+    // gains a value and is not otherwise touched.
+    const alters = statements.match(/^ALTER TABLE "(\w+)"/gm) ?? [];
+    for (const alter of alters) {
+      expect(['ALTER TABLE "resources"', 'ALTER TABLE "resource_bindings"']).toContain(alter);
+    }
+    expect(statements).toMatch(/ALTER TYPE "platform" ADD VALUE 'HOME_ASSISTANT'/);
+  });
+
+  it('rejects an indistinguishable duplicate in a zone', () => {
+    expect(migration).toMatch(/CREATE UNIQUE INDEX "resources_property_id_room_id_kind_name_key"/);
+  });
+
+  /**
+   * The half Prisma cannot express, and the reason this block exists.
+   *
+   * PostgreSQL treats NULLs as distinct, so the constraint above admits two
+   * unassigned resources with the same property, kind, and name -- exactly
+   * the duplicate registration is meant to reject. A partial unique index
+   * closes it, and because it is not representable in `schema.prisma`, a
+   * `prisma migrate dev` would offer to drop it. This test is what makes
+   * that offer fail CI rather than pass review.
+   */
+  it('rejects an indistinguishable duplicate with no zone', () => {
+    expect(migration).toMatch(
+      /CREATE UNIQUE INDEX "resources_property_id_kind_name_unassigned_key"[\s\S]*?ON "resources"\("property_id", "kind", "name"\)[\s\S]*?WHERE "room_id" IS NULL/,
+    );
+  });
+
+  it('scopes a provider binding to one property, not globally', () => {
+    // `light.kitchen` is unique per Home Assistant installation only.
+    expect(migration).toMatch(
+      /CREATE UNIQUE INDEX "resource_bindings_property_id_platform_external_id_key"/,
+    );
+  });
+});

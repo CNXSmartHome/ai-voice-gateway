@@ -244,6 +244,137 @@ describeWithDb('resource registry and control pipeline (integration)', () => {
       ).resolves.toMatchObject({ propertyId: b.property.id });
     });
 
+    describe('the indistinguishable-duplicate invariant', () => {
+      /**
+       * A resource is addressed by property, zone, kind, and name. Two rows
+       * agreeing on all four cannot be told apart by any target a caller can
+       * express, so the resolver can only ever report AMBIGUOUS for them --
+       * an ambiguity nobody can resolve without editing the database.
+       *
+       * Both halves are enforced in the schema. The room-assigned half is the
+       * Prisma `@@unique`; the unassigned half is a partial unique index,
+       * because PostgreSQL treats NULLs as distinct and the plain constraint
+       * silently admits duplicates.
+       */
+      const light = {
+        kind: 'light' as const,
+        capabilities: ['power'] as const,
+        platform: 'home_assistant' as const,
+      };
+
+      it('rejects two resources with the same property, room, kind, and name', async () => {
+        const { caller, organizationId } = await signUp('dup-zoned');
+        const { property, room } = await createProperty(organizationId, 'dup-zoned');
+
+        await registry.register(caller, {
+          ...light,
+          propertyId: property.id,
+          roomId: room.id,
+          name: 'Ceiling Light',
+          externalId: 'light.zoned_a',
+        });
+
+        await expect(
+          registry.register(caller, {
+            ...light,
+            propertyId: property.id,
+            roomId: room.id,
+            name: 'Ceiling Light',
+            externalId: 'light.zoned_b',
+          }),
+        ).rejects.toThrow(/already registered/);
+      });
+
+      it('rejects two unassigned resources with the same property, kind, and name', async () => {
+        // The case a plain UNIQUE misses: room_id IS NULL on both rows.
+        const { caller, organizationId } = await signUp('dup-unassigned');
+        const { property } = await createProperty(organizationId, 'dup-unassigned');
+
+        await registry.register(caller, {
+          ...light,
+          propertyId: property.id,
+          name: 'Ceiling Light',
+          externalId: 'light.unassigned_a',
+        });
+
+        await expect(
+          registry.register(caller, {
+            ...light,
+            propertyId: property.id,
+            name: 'Ceiling Light',
+            externalId: 'light.unassigned_b',
+          }),
+        ).rejects.toThrow(/already registered/);
+      });
+
+      it('allows the same name in two zones of one villa', async () => {
+        const { caller, organizationId } = await signUp('same-name-zones');
+        const { property, room } = await createProperty(organizationId, 'same-name-zones');
+        const secondRoom = await prisma.room.create({
+          data: { propertyId: property.id, name: `Zone ${unique('same-name-zones-2')}` },
+        });
+
+        await registry.register(caller, {
+          ...light,
+          propertyId: property.id,
+          roomId: room.id,
+          name: 'Ceiling Light',
+          externalId: 'light.zone_one',
+        });
+
+        await expect(
+          registry.register(caller, {
+            ...light,
+            propertyId: property.id,
+            roomId: secondRoom.id,
+            name: 'Ceiling Light',
+            externalId: 'light.zone_two',
+          }),
+        ).resolves.toMatchObject({ roomId: secondRoom.id, name: 'Ceiling Light' });
+      });
+
+      it('allows the same name in two villas, assigned or not', async () => {
+        const { caller, organizationId } = await signUp('same-name-villas');
+        const a = await createProperty(organizationId, 'villa-one');
+        const b = await createProperty(organizationId, 'villa-two');
+
+        // Zoned in both villas.
+        await registry.register(caller, {
+          ...light,
+          propertyId: a.property.id,
+          roomId: a.room.id,
+          name: 'Ceiling Light',
+          externalId: 'light.villa_one',
+        });
+        await expect(
+          registry.register(caller, {
+            ...light,
+            propertyId: b.property.id,
+            roomId: b.room.id,
+            name: 'Ceiling Light',
+            externalId: 'light.villa_two',
+          }),
+        ).resolves.toMatchObject({ propertyId: b.property.id });
+
+        // And unassigned in both, which is the partial index's scope: it must
+        // separate villas, not merely reject every null-room duplicate.
+        await registry.register(caller, {
+          ...light,
+          propertyId: a.property.id,
+          name: 'Hall Light',
+          externalId: 'light.villa_one_hall',
+        });
+        await expect(
+          registry.register(caller, {
+            ...light,
+            propertyId: b.property.id,
+            name: 'Hall Light',
+            externalId: 'light.villa_two_hall',
+          }),
+        ).resolves.toMatchObject({ propertyId: b.property.id, roomId: null });
+      });
+    });
+
     it('refuses a MEMBER, for whom registration is not an administrative right', async () => {
       const { caller, organizationId } = await signUp('member', 'MEMBER');
       const { property } = await createProperty(organizationId, 'member');
