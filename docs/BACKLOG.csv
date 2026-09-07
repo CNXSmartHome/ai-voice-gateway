@@ -37,3 +37,8 @@ VG-035,Failure and chaos tests,4,P0,medium,qa,no
 VG-036,App UI cleanup,4,P2,low,mobile,no
 VG-037,Release candidate pipeline,4,P0,high,infra,no
 VG-038,Final acceptance checklist,4,P0,medium,qa,yes
+VG-039,Smart Villa Gateway service-request core,5,P0,medium,backend,no
+VG-040,Smart Villa resource registry and control pipeline,5,P0,medium,integration,no
+VG-041,SVC-Voice semantic device API,5,P0,medium,ai,no
+VG-042,Guest QR session and villa info API,5,P0,medium,backend,no
+VG-043,Staff realtime service-request workflow,5,P1,medium,backend,no
