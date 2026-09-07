@@ -5,19 +5,26 @@ import { DatabaseModule } from './database/database.module';
 import { GatewaysModule } from './gateways/gateways.module';
 import { HealthModule } from './health/health.module';
 import { PropertiesModule } from './properties/properties.module';
+import { ServiceRequestsModule } from './service-requests/service-requests.module';
 
 /**
  * Root module.
  *
- * Service modules from docs/ARCHITECTURE.md land here as their tasks
- * complete: Gateway (VG-005/006), Integration (VG-009+), Orchestrator,
- * and AI Session (VG-019).
+ * `AuthModule` registers a global guard, so importing it protects every route
+ * unless a route explicitly opts out with `@Public()`.
  *
- * `AuthModule` registers a global guard, so importing it protects every
- * route in the application — including ones added by those later modules,
- * unless they opt out with `@Public()`.
+ * Smart Villa domains are added as modules rather than folded into the voice
+ * transport layer. This keeps guest, voice and staff entry points able to
+ * share one authoritative workflow service.
  */
 @Module({
-  imports: [DatabaseModule, AuthModule, HealthModule, PropertiesModule, GatewaysModule],
+  imports: [
+    DatabaseModule,
+    AuthModule,
+    HealthModule,
+    PropertiesModule,
+    GatewaysModule,
+    ServiceRequestsModule,
+  ],
 })
 export class AppModule {}
