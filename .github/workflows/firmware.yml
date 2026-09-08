@@ -20,7 +20,7 @@ jobs:
     name: Firmware host tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # No ESP-IDF here on purpose. The provisioning policy is pure C so it
       # can be tested in seconds by anyone, which is the point of separating
@@ -42,7 +42,7 @@ jobs:
     # on someone's desk is flashed from a fixed toolchain.
     container: espressif/idf:v5.5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The image ships the toolchain but does not activate it, so every step
       # that needs `idf.py` sources the environment first.
