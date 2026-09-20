@@ -9,6 +9,11 @@ export default tseslint.config(
       '**/dist/**',
       '**/node_modules/**',
       '**/coverage/**',
+      // Build output. `.gitignore` and `.prettierignore` already exclude it;
+      // ESLint did not, and CMake writes stamp files named
+      // `compiler_depend.ts` into `build/firmware-host`, so running the host
+      // tests exactly as `docs/CI.md` documents made `npm run lint` fail.
+      '**/build/**',
       'firmware/**',
       'apps/mobile/.expo/**',
       'apps/mobile/android/**',

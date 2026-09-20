@@ -99,6 +99,17 @@ Two properties matter here:
 Fork pull requests are ignored, so the workflow never evaluates a policy over
 code the repository does not control.
 
+## Node version
+
+`.nvmrc` is the single source. Every `actions/setup-node` step reads it with
+`node-version-file`, so all three workflows resolve the same version and a
+bump is one edit rather than four.
+
+`package.json` keeps `engines.node` as a **floor** (`>=20.11.0`), which is a
+different statement: the lowest version the code is expected to work on, not
+the one CI runs. A developer on a newer Node passes local checks; CI is still
+the version in `.nvmrc`. `nvm use` locally to match it.
+
 ## Running the checks locally
 
 CI runs nothing that cannot be run locally:
@@ -131,6 +142,12 @@ cmake -S firmware/vg100/test/host -B build/firmware-host -DCMAKE_BUILD_TYPE=Debu
 cmake --build build/firmware-host
 ctest --test-dir build/firmware-host --output-on-failure
 ```
+
+`build/` is ignored by git, Prettier, and ESLint. The ESLint entry is not
+redundant tidiness: CMake writes dependency stamp files named
+`compiler_depend.ts` under `build/firmware-host`, and without it the commands
+above leave `npm run lint` failing on three files no one wrote. CI never saw
+it, because the firmware and Node jobs run in separate containers.
 
 The ESP-IDF build needs the toolchain. A machine without one — a Windows
 workstation, for instance — can borrow the same container CI uses, on the
